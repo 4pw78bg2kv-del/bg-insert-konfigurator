@@ -5,15 +5,20 @@
  */
 import { create } from 'zustand';
 import {
+  computeLayout,
+  gridInfo,
   createCardTray,
   createDefaultProject,
   createGridBox,
+  createLayer,
   duplicateModule,
   parseProject,
   serializeProject,
   suggestName,
   type BoxSettings,
+  type GridSettings,
   type InsertModule,
+  type Layer,
   type ModuleType,
   type PrintSettings,
   type Project,
@@ -37,15 +42,23 @@ export type ViewMode = 'all' | 'single';
 interface State {
   project: Project;
   selectedId: string | null;
+  activeLayerId: string;
   parts: Record<string, PartPreview>;
   building: boolean;
   buildError: string | null;
   viewMode: ViewMode;
   showBox: boolean;
+  /** Abstand zwischen den Ebenen in der Explosionsansicht (mm). */
+  explode: number;
 
   setName(name: string): void;
   setBox(patch: Partial<BoxSettings>): void;
   setPrint(patch: Partial<PrintSettings>): void;
+  setGrid(patch: Partial<GridSettings>): void;
+  addLayer(): void;
+  updateLayer(id: string, patch: Partial<Layer>): void;
+  removeLayer(id: string): void;
+  setActiveLayer(id: string): void;
   addModule(type: ModuleType): void;
   updateModule(id: string, patch: Partial<InsertModule>): void;
   removeModule(id: string): void;
@@ -58,23 +71,75 @@ interface State {
   setBuilding(b: boolean, error?: string | null): void;
   setViewMode(v: ViewMode): void;
   setShowBox(v: boolean): void;
+  setExplode(v: number): void;
+  /** Verschiebt ein Modul (fixiert es dabei). Mit Raster in Zellen, sonst in mm. */
+  nudge(id: string, dx: number, dy: number, stepMm?: number): void;
+  rotate(id: string): void;
+  /** Modul in die Ebene darüber (+1) oder darunter (−1) verschieben. */
+  shiftLayer(id: string, dir: -1 | 1): void;
+  selectNext(dir: -1 | 1): void;
+  undo(): void;
+  redo(): void;
+  canUndo: boolean;
+  canRedo: boolean;
+  helpOpen: boolean;
+  setHelpOpen(v: boolean): void;
 }
 
+// ---------------------------------------------------------------------------
+// Verlauf für Rückgängig/Wiederholen. Schnelle Folgeänderungen (z. B. Tippen)
+// werden zu einem Schritt zusammengefasst.
+const past: Project[] = [];
+const future: Project[] = [];
+const HISTORY_LIMIT = 100;
+const MERGE_MS = 600;
+let lastRecord = 0;
+let restoring = false;
+
+function round2(v: number) {
+  return Math.round(v * 100) / 100;
+}
+
+const initial = loadInitial();
+
 export const useStore = create<State>((set) => ({
-  project: loadInitial(),
+  project: initial,
   selectedId: null,
+  activeLayerId: initial.layers[0].id,
   parts: {},
   building: false,
   buildError: null,
   viewMode: 'all',
   showBox: true,
+  explode: 0,
 
   setName: (name) => set((s) => ({ project: { ...s.project, name } })),
   setBox: (patch) => set((s) => ({ project: { ...s.project, box: { ...s.project.box, ...patch } } })),
   setPrint: (patch) => set((s) => ({ project: { ...s.project, print: { ...s.project.print, ...patch } } })),
+  setGrid: (patch) => set((s) => ({ project: { ...s.project, grid: { ...s.project.grid, ...patch } } })),
+
+  addLayer: () =>
+    set((s) => {
+      const layer = createLayer(s.project.layers.length);
+      return { project: { ...s.project, layers: [...s.project.layers, layer] }, activeLayerId: layer.id };
+    }),
+  updateLayer: (id, patch) =>
+    set((s) => ({ project: { ...s.project, layers: s.project.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)) } })),
+  removeLayer: (id) =>
+    set((s) => {
+      if (s.project.layers.length <= 1) return {};
+      const layers = s.project.layers.filter((l) => l.id !== id);
+      const fallback = layers[0].id;
+      // Module der gelöschten Ebene wandern in die unterste Ebene.
+      const modules = s.project.modules.map((m) => (m.layerId === id ? { ...m, layerId: fallback } : m));
+      return { project: { ...s.project, layers, modules }, activeLayerId: s.activeLayerId === id ? fallback : s.activeLayerId };
+    }),
+  setActiveLayer: (activeLayerId) => set({ activeLayerId }),
+
   addModule: (type) =>
     set((s) => {
       const m = type === 'cardTray' ? createCardTray() : createGridBox();
+      m.layerId = s.project.layers.some((l) => l.id === s.activeLayerId) ? s.activeLayerId : s.project.layers[0].id;
       const taken = new Set(s.project.modules.map((x) => x.name));
       for (let n = 2; taken.has(m.name); n++) m.name = `${suggestName(m)} ${n}`;
       return { project: { ...s.project, modules: [...s.project.modules, m] }, selectedId: m.id };
@@ -120,14 +185,119 @@ export const useStore = create<State>((set) => ({
       [modules[i], modules[j]] = [modules[j], modules[i]];
       return { project: { ...s.project, modules } };
     }),
-  select: (id) => set({ selectedId: id }),
-  loadProject: (p) => set({ project: p, selectedId: null, parts: {} }),
-  newProject: () => set({ project: createDefaultProject(), selectedId: null, parts: {} }),
-  setParts: (parts) => set({ parts: Object.fromEntries(parts.map((p) => [p.moduleId, p])) }),
+  select: (id) =>
+    set((s) => {
+      const m = s.project.modules.find((x) => x.id === id);
+      return { selectedId: id, activeLayerId: m ? m.layerId : s.activeLayerId };
+    }),
+  loadProject: (p) => set({ project: p, selectedId: null, parts: {}, activeLayerId: p.layers[0].id }),
+  newProject: () =>
+    set(() => {
+      const p = createDefaultProject();
+      return { project: p, selectedId: null, parts: {}, activeLayerId: p.layers[0].id };
+    }),
+  setParts: (parts) => set({ parts: Object.fromEntries(parts.map((p) => [p.partId, p])) }),
   setBuilding: (building, error = null) => set({ building, buildError: error }),
   setViewMode: (viewMode) => set({ viewMode }),
   setShowBox: (showBox) => set({ showBox }),
+  setExplode: (explode) => set({ explode }),
+
+  nudge: (id, dx, dy, stepMm = 1) =>
+    set((s) => {
+      const m = s.project.modules.find((x) => x.id === id);
+      if (!m) return {};
+      const g = gridInfo(s.project);
+      let pl = m.placement;
+      if (pl.mode !== 'manual') {
+        const inst = computeLayout(s.project).find((i) => i.moduleId === id && i.copyIndex === 0);
+        const x = inst?.x ?? 0;
+        const y = inst?.y ?? 0;
+        pl = {
+          ...pl,
+          x: round2(x),
+          y: round2(y),
+          gx: Math.max(0, Math.round((x - g.clearance) / g.cellX)),
+          gy: Math.max(0, Math.round((y - g.clearance) / g.cellY)),
+        };
+      }
+      const placement = g.enabled
+        ? { ...pl, mode: 'manual' as const, gx: Math.max(0, pl.gx + dx), gy: Math.max(0, pl.gy + dy) }
+        : { ...pl, mode: 'manual' as const, x: round2(pl.x + dx * stepMm), y: round2(pl.y + dy * stepMm) };
+      return { project: { ...s.project, modules: s.project.modules.map((x) => (x.id === id ? { ...x, placement } : x)) } };
+    }),
+  rotate: (id) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        modules: s.project.modules.map((x) => (x.id === id ? { ...x, placement: { ...x.placement, rotated: !x.placement.rotated } } : x)),
+      },
+    })),
+  shiftLayer: (id, dir) =>
+    set((s) => {
+      const m = s.project.modules.find((x) => x.id === id);
+      if (!m) return {};
+      const idx = s.project.layers.findIndex((l) => l.id === m.layerId);
+      const target = s.project.layers[idx + dir];
+      if (!target) return {};
+      return {
+        project: { ...s.project, modules: s.project.modules.map((x) => (x.id === id ? { ...x, layerId: target.id } : x)) },
+        activeLayerId: target.id,
+      };
+    }),
+  selectNext: (dir) =>
+    set((s) => {
+      const mods = s.project.modules;
+      if (mods.length === 0) return {};
+      const i = mods.findIndex((m) => m.id === s.selectedId);
+      const next = mods[(i < 0 ? (dir > 0 ? 0 : mods.length - 1) : (i + dir + mods.length) % mods.length)];
+      return { selectedId: next.id, activeLayerId: next.layerId };
+    }),
+  undo: () =>
+    set((s) => {
+      const prev = past.pop();
+      if (!prev) return {};
+      future.push(s.project);
+      restoring = true;
+      return { project: prev, canUndo: past.length > 0, canRedo: true, ...keepSelection(prev, s.selectedId) };
+    }),
+  redo: () =>
+    set((s) => {
+      const next = future.pop();
+      if (!next) return {};
+      past.push(s.project);
+      restoring = true;
+      return { project: next, canUndo: true, canRedo: future.length > 0, ...keepSelection(next, s.selectedId) };
+    }),
+  canUndo: false,
+  canRedo: false,
+  helpOpen: false,
+  setHelpOpen: (helpOpen) => set({ helpOpen }),
 }));
+
+function keepSelection(p: Project, selectedId: string | null) {
+  const layerOk = (id: string) => p.layers.some((l) => l.id === id);
+  return {
+    selectedId: p.modules.some((m) => m.id === selectedId) ? selectedId : null,
+    activeLayerId: layerOk(useStore.getState().activeLayerId) ? useStore.getState().activeLayerId : p.layers[0].id,
+  };
+}
+
+// Verlauf aufzeichnen
+useStore.subscribe((s, prev) => {
+  if (s.project === prev.project) return;
+  if (restoring) {
+    restoring = false;
+    return;
+  }
+  const now = Date.now();
+  if (now - lastRecord > MERGE_MS || past.length === 0) {
+    past.push(prev.project);
+    if (past.length > HISTORY_LIMIT) past.shift();
+  }
+  lastRecord = now;
+  future.length = 0;
+  if (!s.canUndo || s.canRedo) useStore.setState({ canUndo: true, canRedo: false });
+});
 
 // Autosave im Browser (best effort).
 useStore.subscribe((s, prev) => {

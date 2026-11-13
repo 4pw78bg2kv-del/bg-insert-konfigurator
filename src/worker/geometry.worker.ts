@@ -2,9 +2,8 @@
 /**
  * Web Worker: führt alle Geometrie-Berechnungen abseits des UI-Threads aus.
  *
- * - Ergebnisse werden pro Modul gecacht (Schlüssel = Modulparameter + relevante
- *   globale Einstellungen), sodass bei einer Änderung nur betroffene Teile
- *   neu berechnet werden.
+ * - Ergebnisse werden pro Teil gecacht (Schlüssel = alle geometrierelevanten
+ *   Parameter), sodass bei einer Änderung nur betroffene Teile neu entstehen.
  * - Jedes Teil wird beim Bauen als Binär-STL geschrieben, wieder eingelesen und
  *   auf Wasserdichtheit geprüft; das Ergebnis erscheint in der UI.
  */
@@ -12,9 +11,10 @@ import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { zipSync } from 'fflate';
 import { buildPart, type PartResult } from '../geometry/build';
 import { initKernel } from '../geometry/kernel';
-import { partFileName, uniqueFileNames } from '../geometry/project';
+import { listParts } from '../geometry/parts';
+import { fileNameFor, serializeProject, uniqueFileNames } from '../geometry/project';
 import { checkWatertight, parseBinaryStl, writeBinaryStl } from '../geometry/stl';
-import type { InsertModule, Project } from '../geometry/types';
+import type { PartSpec, Project } from '../geometry/types';
 import type { ExportedFile, PartPreview, WorkerRequest, WorkerResponse } from './protocol';
 
 interface CacheEntry {
@@ -24,16 +24,22 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-const MAX_CACHE = 64;
+const MAX_CACHE = 96;
 
-function cacheKey(m: InsertModule, project: Project): string {
-  // Platzierung, Name und Stückzahl beeinflussen die Geometrie nicht.
-  const { placement: _p, name: _n, quantity: _q, id: _i, ...geom } = m;
-  return JSON.stringify([geom, project.print, project.box.innerHeight, project.box.headroom]);
+function cacheKey(spec: PartSpec, p: Project): string {
+  const { name: _n, quantity: _q, ...specGeom } = spec;
+  const m = p.modules.find((x) => x.id === spec.moduleId);
+  let mod: unknown = null;
+  if (m) {
+    const { name: _mn, quantity: _mq, id: _id, placement, ...rest } = m;
+    mod = { ...rest, rotated: placement.rotated };
+  }
+  const layers = p.layers.map((l) => [l.id, l.heightMode, l.height]);
+  return JSON.stringify([specGeom.kind, specGeom.variant, specGeom.tile, mod, p.print, p.box, p.grid, layers]);
 }
 
-async function getPart(m: InsertModule, project: Project): Promise<CacheEntry> {
-  const key = cacheKey(m, project);
+async function getPart(spec: PartSpec, p: Project): Promise<CacheEntry> {
+  const key = cacheKey(spec, p);
   const hit = cache.get(key);
   if (hit) {
     cache.delete(key);
@@ -41,8 +47,8 @@ async function getPart(m: InsertModule, project: Project): Promise<CacheEntry> {
     return hit;
   }
   const k = await initKernel(wasmUrl);
-  const part = buildPart(k, m, project);
-  const stl = writeBinaryStl(part.mesh, `BG-Insert-Konfigurator: ${m.name}`);
+  const part = buildPart(k, spec, p);
+  const stl = writeBinaryStl(part.mesh, `BG-Insert-Konfigurator: ${spec.name}`);
   const watertight = part.status === 'NoError' && checkWatertight(parseBinaryStl(stl)).watertight;
   const entry = { part, stl, watertight };
   cache.set(key, entry);
@@ -57,14 +63,14 @@ function post(msg: WorkerResponse, transfer: Transferable[] = []) {
 self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const req = ev.data;
   try {
+    const specs = listParts(req.project);
     if (req.type === 'build') {
       const parts: PartPreview[] = [];
-      for (const m of req.project.modules) {
+      for (const spec of specs) {
         try {
-          const e = await getPart(m, req.project);
+          const e = await getPart(spec, req.project);
           parts.push({
-            moduleId: m.id,
-            // Kopien senden, damit der Cache seine Daten behält.
+            partId: spec.id,
             positions: e.part.mesh.positions.slice(),
             indices: e.part.mesh.indices.slice(),
             volume: e.part.volume,
@@ -73,7 +79,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           });
         } catch (err) {
           parts.push({
-            moduleId: m.id,
+            partId: spec.id,
             positions: new Float32Array(),
             indices: new Uint32Array(),
             volume: 0,
@@ -83,20 +89,19 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           });
         }
       }
-      post({ type: 'built', reqId: req.reqId, parts }, parts.flatMap((p) => [p.positions.buffer, p.indices.buffer]));
+      post({ type: 'built', reqId: req.reqId, parts }, parts.flatMap((x) => [x.positions.buffer, x.indices.buffer]));
       return;
     }
 
-    const modules =
-      req.type === 'exportPart' ? req.project.modules.filter((m) => m.id === req.moduleId) : req.project.modules;
-    if (modules.length === 0) throw new Error('Keine Teile zum Exportieren.');
-    const names = uniqueFileNames(modules.map(partFileName));
+    const chosen = req.type === 'exportPart' ? specs.filter((s) => s.id === req.partId) : specs;
+    if (chosen.length === 0) throw new Error('Keine Teile zum Exportieren.');
+    const names = uniqueFileNames(chosen.map((s) => fileNameFor(s.name, s.quantity)));
     const files: ExportedFile[] = [];
     const entries: CacheEntry[] = [];
-    for (let i = 0; i < modules.length; i++) {
-      const e = await getPart(modules[i], req.project);
+    for (let i = 0; i < chosen.length; i++) {
+      const e = await getPart(chosen[i], req.project);
       entries.push(e);
-      files.push({ moduleId: modules[i].id, name: names[i], watertight: e.watertight });
+      files.push({ partId: chosen[i].id, name: names[i], watertight: e.watertight });
     }
 
     if (req.type === 'exportPart') {
@@ -107,7 +112,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
 
     const zipInput: Record<string, Uint8Array> = {};
     names.forEach((n, i) => (zipInput[n] = new Uint8Array(entries[i].stl)));
-    zipInput['projekt.json'] = new TextEncoder().encode(JSON.stringify(req.project, null, 2));
+    zipInput['projekt.json'] = new TextEncoder().encode(serializeProject(req.project));
     const zipped = zipSync(zipInput, { level: 6 });
     const data = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
     const safe = (req.project.name || 'Insert').replace(/[^A-Za-z0-9._-]+/g, '_');

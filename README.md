@@ -5,19 +5,43 @@ geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
 
 **Live-Vorschau:** https://4pw78bg2kv-del.github.io/bg-insert-konfigurator/ (nach dem ersten Deploy von `main`)
 
-## Funktionsumfang (Meilenstein 1 – MVP)
+## Funktionsumfang
 
-- **Spielschachtel:** Innenmaße, Karton-Wand/Boden (→ Außenmaße), reservierter Kopfraum, nutzbare Ebenenhöhe.
-- **Kartenfach:** Presets (Poker, Standard American, Mini European, Mini American, Standard European, Tarot, Square) oder eigene Maße,
-  Sleeves-Kalkulator (ohne / Standard / Premium) für Breite, Höhe und Stapeldicke, feste Fächer, stehend oder liegend, Griffmulde.
-- **Rasterbox:** Spalten × Reihen, optional abgesenkte Trennwände.
-- **Layout:** automatische Anordnung (Reihenfolge der Modulliste), pro Modul umschaltbar auf manuelle Position
-  (Zahleneingabe, Pfeil-Buttons mit 0,5/1/5/10 mm, 90°-Drehung). Automatische Module weichen fixierten aus.
-- **Prüfungen:** Kollisionen, Überstand über die Schachtel, zu hohe Karten/Module, zu kleine Fächer.
-- **3D-Vorschau:** Gesamtansicht mit transparenter Schachtel und Kopfraum-Ebene, Einzelteilansicht, Klick zum Auswählen.
-- **Globale Druckparameter:** Spaltmaß (Standard 0,2 mm), Wand-, Boden- und Trennwandstärke.
-- **Export:** Binär-STL pro Teil oder alle Teile als ZIP (`2x_Kartenfach_Poker.stl` usw., inkl. `projekt.json`).
-- **Projekt:** Speichern/Laden als JSON, automatische Zwischenspeicherung im Browser.
+- **Spielschachtel:** Innenmaße, Karton-Wand/Boden (→ Außenmaße), reservierter Kopfraum, nutzbare Höhe.
+- **Ebenen:** beliebig viele gestapelte Ebenen (feste Höhe oder „Auto“ = Resthöhe teilen), einzeln ein-/ausblendbar, Explosionsansicht.
+- **Innenraster:** alle Module belegen ganze Rasterzellen, die die Schachtel exakt füllen. Optional eine **Grundplatte mit
+  Verriegelungsrippen** (45°-Flanken, stützfrei), in die die Module mit Nuten im Boden einrasten. Die Platte wird automatisch in
+  druckbare Kacheln geteilt.
+- **Kartenfach:** 7 Presets oder eigene Maße, Sleeves-Kalkulator, stehend oder liegend, **Hoch-/Querformat**, **senkrecht oder schräg**
+  (Neigung frei wählbar), **1- oder 2-reihig**.
+  - **Feste Fächer** (mitgedruckt) oder **variable Trenner**: glatte Wände (frei verschiebbar) oder **Zackenmuster** (Trenner rasten ein).
+  - Variable Trenner: **Karten und Trenner gesamt** angeben, die Länge wird automatisch berechnet. Trenner werden als eigene STL
+    exportiert, optional mit **Beschriftungslasche** (auch versetzt links/Mitte/rechts).
+  - **Höhe automatisch:** so hoch wie Karten plus Lasche, ohne Überstand.
+  - Griffmulde (teilweise oder bis zum Boden), Griffloch im Boden.
+- **Rasterbox:** freie Aufteilung (Reihen mit eigenen Spaltenanteilen, z. B. „1 2 1“), abgesenkte Trennwände,
+  Griffmulden (teilweise / bis zum Boden; vorne, vorne+hinten oder links+rechts), Grifflöcher im Boden,
+  **Steckdeckel mit Rastnasen** (eigene STL, mit Öffnungsmulde).
+- **Layout:** automatische Anordnung, pro Modul umschaltbar auf manuelle Position (Zelle bzw. mm, Pfeiltasten, 90°-Drehung).
+- **Prüfungen:** Kollisionen, Überstand, zu hohe Karten/Module/Ebenen, zu kleine Fächer.
+- **3D-Vorschau:** Gesamtansicht mit transparenter Schachtel, Deckeln, Trennern und Grundplatte; Einzelteilansicht in Druckorientierung.
+- **Export:** Binär-STL pro Teil oder alles als ZIP (`2x_Kartenfach_Poker_Trenner_links.stl` usw., inkl. `projekt.json`).
+- **Projekt:** Speichern/Laden als JSON (alte Dateien werden übernommen), Autosave im Browser, Rückgängig/Wiederholen.
+
+## Tastaturbefehle
+
+| Taste | Aktion |
+| --- | --- |
+| Pfeiltasten (Umschalt = 10 mm) | Modul verschieben |
+| R / A | 90° drehen / automatisch ↔ manuell |
+| Bild ↑ / Bild ↓ | Modul eine Ebene höher / tiefer |
+| Tab / Umschalt+Tab | nächstes / vorheriges Modul |
+| Entf, Strg+D, Esc | löschen, duplizieren, Auswahl aufheben |
+| K / G | neues Kartenfach / neue Rasterbox |
+| Strg+Z / Strg+Y | rückgängig / wiederholen |
+| Strg+S / Strg+O / Strg+E | speichern / laden / ZIP-Export |
+| 1 / 2 / B | Gesamtansicht / Einzelteil / Schachtel ein-aus |
+| ? | Übersicht aller Tastaturbefehle |
 
 ## STL-Qualität
 
@@ -39,8 +63,9 @@ src/
     validate.ts    Kollisions- und Plausibilitätsprüfung
     project.ts     Standardwerte, Dateinamen, JSON laden/speichern
     kernel.ts      Manifold-WASM-Initialisierung, Speicherverwaltung
-    parts/         Ein Modul pro Bauteil-Typ (cardTray, gridBox)
-    build.ts       Modul → Mesh
+    parts.ts       Stückliste (Modul, Deckel, Trenner, Grundplatten) und Vorschau-Platzierung
+    parts/         Bauteile: cardTray, divider, gridBox (+ Deckel), baseplate (+ Nuten)
+    build.ts       Teil → Mesh (inkl. float32-sicherer Vereinfachung)
     stl.ts         Binär-STL schreiben/lesen, Wasserdicht-Prüfung
   worker/          Web Worker: Geometrie + Export abseits des UI-Threads (mit Cache)
   state/           Zustand-Store
@@ -62,8 +87,8 @@ npm run build      # Produktions-Build nach dist/
 
 ## Fahrplan
 
-1. **MVP** (dieser Stand)
-2. Deckel (Schiebe-, Magnet-, Stülpdeckel), Fingermulden im Boden, 45°-Fasen, Magnet-Stückliste
-3. Mehrere Ebenen mit Stapelkanten, Druckbett-Ansicht mit Auto-Nesting, Schnittansichten
+1. **MVP** ✓
+2. Runde 2 ✓: Innenraster mit Grundplatte, Ebenen, variable Trenner, Steckdeckel, Tastaturbefehle
+3. Weitere Deckel (Schiebe-, Magnetdeckel), Stapelkanten zwischen Ebenen, Druckbett-Ansicht mit Auto-Nesting, Schnittansichten
 4. Bibliothek: Token-Schalen mit Scoop, Kartenhalter, Hex-Halter, Würfelturm, Stiftehalter, Dashboards, Schubladen
 5. Komfort: Waben-Aussparungen, Text-Prägung, Vertical-Storage-Clips

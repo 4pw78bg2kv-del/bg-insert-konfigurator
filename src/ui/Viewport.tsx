@@ -5,52 +5,68 @@
  * deshalb um -90° um X gedreht, damit sie in der Y-oben-Welt von Three.js
  * richtig steht.
  */
-import { Edges, GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
+import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { usableHeight, type PlacedInstance } from '../geometry';
+import { layerInfos, listParts, scenePlacements, usableHeight, type PlacedInstance, type ScenePlacement } from '../geometry';
 import { useStore } from '../state/store';
 import type { PartPreview } from '../worker/protocol';
 
 const PALETTE = ['#e08a3c', '#4f9dde', '#6cbf6a', '#c770c9', '#e0c23c', '#5ac7c0', '#e0605c', '#9a8cf0'];
+const DEG = Math.PI / 180;
 
-function usePartGeometry(part: PartPreview | undefined) {
+function useGeometries(parts: Record<string, PartPreview>) {
   return useMemo(() => {
-    if (!part || part.triangles === 0) return null;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(part.positions, 3));
-    g.setIndex(new THREE.BufferAttribute(part.indices, 1));
-    g.computeBoundingBox();
-    return g;
-  }, [part]);
+    const map = new Map<string, THREE.BufferGeometry>();
+    for (const [id, part] of Object.entries(parts)) {
+      if (part.triangles === 0) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(part.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(part.indices, 1));
+      g.computeBoundingBox();
+      map.set(id, g);
+    }
+    return map;
+  }, [parts]);
+}
+
+/** Kantenlinien (einfache GL-Linien, robust auf allen Grafiktreibern). */
+function EdgeLines({ geometry, color, threshold = 20 }: { geometry: THREE.BufferGeometry; color: string; threshold?: number }) {
+  const edges = useMemo(() => new THREE.EdgesGeometry(geometry, threshold), [geometry, threshold]);
+  return (
+    <lineSegments geometry={edges} raycast={() => null}>
+      <lineBasicMaterial color={color} />
+    </lineSegments>
+  );
+}
+
+/** Kanten eines Quaders (für Schachtel und Kopfraum). */
+function BoxEdges({ args, color }: { args: [number, number, number]; color: string }) {
+  const g = useMemo(() => new THREE.BoxGeometry(...args), [args[0], args[1], args[2]]);
+  return <EdgeLines geometry={g} color={color} threshold={1} />;
 }
 
 function PartMesh({
-  part,
+  geometry,
   color,
-  instance,
   selected,
+  opacity = 1,
   onSelect,
 }: {
-  part: PartPreview | undefined;
+  geometry: THREE.BufferGeometry;
   color: string;
-  instance: Pick<PlacedInstance, 'x' | 'y' | 'rotated' | 'depth' | 'width'>;
   selected: boolean;
-  onSelect(): void;
+  opacity?: number;
+  onSelect?: () => void;
 }) {
-  const geometry = usePartGeometry(part);
-  if (!geometry) return null;
-  // Rotation um Z: (x, y) → (−y, x); danach um die (Original-)Tiefe verschieben.
-  const position: [number, number, number] = instance.rotated ? [instance.x + instance.width, instance.y, 0] : [instance.x, instance.y, 0];
   return (
     <mesh
       geometry={geometry}
-      position={position}
-      rotation={[0, 0, instance.rotated ? Math.PI / 2 : 0]}
       castShadow
       receiveShadow
       onClick={(e) => {
+        if (!onSelect) return;
         e.stopPropagation();
         onSelect();
       }}
@@ -60,11 +76,29 @@ function PartMesh({
         flatShading
         roughness={0.65}
         metalness={0.05}
+        transparent={opacity < 1}
+        opacity={opacity}
         emissive={selected ? '#ffffff' : '#000000'}
         emissiveIntensity={selected ? 0.18 : 0}
       />
-      <Edges threshold={20} color={selected ? '#ffffff' : '#1d1d1d'} />
+      <EdgeLines geometry={geometry} color={selected ? '#ffffff' : '#1d1d1d'} />
     </mesh>
+  );
+}
+
+function Placed({ pl, children, dz }: { pl: ScenePlacement; children: React.ReactNode; dz: number }) {
+  // Drehung um Z: (x, y) → (−y, x); danach um die Footprint-Breite verschieben.
+  const pos: [number, number, number] = [pl.x + (pl.rotated ? pl.width : 0), pl.y, pl.z + dz];
+  return (
+    <group position={pos} rotation={[0, 0, pl.rotated ? Math.PI / 2 : 0]}>
+      {pl.local ? (
+        <group position={[pl.local.x, pl.local.y, pl.local.z]} rotation={[pl.local.rx * DEG, 0, 0]}>
+          {children}
+        </group>
+      ) : (
+        children
+      )}
+    </group>
   );
 }
 
@@ -78,24 +112,16 @@ function OuterBox() {
   const f = box.floorThickness;
   return (
     <group>
-      {/* Karton (transparent) */}
       <mesh position={[W / 2, D / 2, (H - f) / 2]} renderOrder={10}>
         <boxGeometry args={[W + 2 * t, D + 2 * t, H + f]} />
-        <meshStandardMaterial color="#b9a27c" transparent opacity={0.12} depthWrite={false} side={THREE.DoubleSide} />
-        <Edges color="#8a7350" />
+        <meshStandardMaterial color="#b9a27c" transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} />
+        <BoxEdges args={[W + 2 * t, D + 2 * t, H + f]} color="#8a7350" />
       </mesh>
-      {/* Innenraum */}
-      <mesh position={[W / 2, D / 2, H / 2]}>
-        <boxGeometry args={[W, D, H]} />
-        <meshBasicMaterial visible={false} />
-        <Edges color="#c9b48f" />
-      </mesh>
-      {/* Grenze nutzbare Höhe / Kopfraum */}
       {box.headroom > 0 && (
         <mesh position={[W / 2, D / 2, usable]} renderOrder={11}>
           <planeGeometry args={[W, D]} />
-          <meshBasicMaterial color="#e05c5c" transparent opacity={0.08} depthWrite={false} side={THREE.DoubleSide} />
-          <Edges color="#e05c5c" />
+          <meshBasicMaterial color="#e05c5c" transparent opacity={0.07} depthWrite={false} side={THREE.DoubleSide} />
+          <BoxEdges args={[W, D, 0.01]} color="#e05c5c" />
         </mesh>
       )}
     </group>
@@ -108,21 +134,42 @@ export function Viewport({ layout }: { layout: PlacedInstance[] }) {
   const selectedId = useStore((s) => s.selectedId);
   const viewMode = useStore((s) => s.viewMode);
   const showBox = useStore((s) => s.showBox);
+  const explode = useStore((s) => s.explode);
   const select = useStore((s) => s.select);
   const { box } = project;
+  const geometries = useGeometries(parts);
 
   const colorOf = useMemo(() => {
     const map = new Map(project.modules.map((m, i) => [m.id, PALETTE[i % PALETTE.length]]));
-    return (id: string) => map.get(id) ?? '#999';
+    return (pl: { partId: string; moduleId?: string }) => {
+      if (pl.partId.startsWith('baseplate:')) return '#6b7280';
+      if (pl.partId.includes(':div:')) return '#e9e4da';
+      const c = map.get(pl.moduleId ?? '') ?? '#999';
+      return pl.partId.endsWith(':lid') ? new THREE.Color(c).offsetHSL(0, -0.1, 0.12).getStyle() : c;
+    };
   }, [project.modules]);
 
-  const single = viewMode === 'single' ? project.modules.find((m) => m.id === selectedId) ?? project.modules[0] : undefined;
-  const singlePart = single ? parts[single.id] : undefined;
-  const singleBB = singlePart && singlePart.triangles > 0 ? bboxOf(singlePart.positions) : null;
-
+  const layers = layerInfos(project);
+  const layerIndex = new Map(layers.map((l) => [l.layer.id, l.index]));
+  const visible = new Set(project.layers.filter((l) => l.visible).map((l) => l.id));
+  const placements = useMemo(() => scenePlacements(project, layout), [project, layout]);
   const extent = Math.max(box.innerWidth, box.innerDepth, box.innerHeight);
-  const center: [number, number, number] = single && singleBB
-    ? [-(singleBB[0] / 2), -(singleBB[1] / 2), 0]
+
+  // Einzelteil-Ansicht: alle STL-Teile des gewählten Moduls in Druckorientierung nebeneinander
+  const singleModule = viewMode === 'single' ? project.modules.find((m) => m.id === selectedId) ?? project.modules[0] : undefined;
+  const singleParts = singleModule ? listParts(project).filter((p) => p.moduleId === singleModule.id) : [];
+  let offset = 0;
+  const singleItems = singleParts.flatMap((spec) => {
+    const g = geometries.get(spec.id);
+    if (!g?.boundingBox) return [];
+    const x = offset;
+    offset += g.boundingBox.max.x - g.boundingBox.min.x + 10;
+    return [{ spec, g, x }];
+  });
+  const singleDepth = Math.max(0, ...singleItems.map((i) => i.g.boundingBox!.max.y));
+
+  const center: [number, number, number] = singleModule
+    ? [-(offset - 10) / 2, -singleDepth / 2, 0]
     : [-box.innerWidth / 2, -box.innerDepth / 2, 0];
 
   return (
@@ -139,56 +186,45 @@ export function Viewport({ layout }: { layout: PlacedInstance[] }) {
 
       <group rotation={[-Math.PI / 2, 0, 0]}>
         <group position={center}>
-          {single ? (
-            <PartMesh
-              part={singlePart}
-              color={colorOf(single.id)}
-              instance={{ x: 0, y: 0, rotated: false, width: 0, depth: 0 }}
-              selected={false}
-              onSelect={() => {}}
-            />
+          {singleModule ? (
+            singleItems.map(({ spec, g, x }) => (
+              <group key={spec.id} position={[x, 0, 0]}>
+                <PartMesh geometry={g} color={colorOf({ partId: spec.id, moduleId: spec.moduleId })} selected={false} />
+              </group>
+            ))
           ) : (
             <>
-              {layout.map((inst) => (
-                <PartMesh
-                  key={`${inst.moduleId}-${inst.copyIndex}`}
-                  part={parts[inst.moduleId]}
-                  color={colorOf(inst.moduleId)}
-                  instance={inst}
-                  selected={inst.moduleId === selectedId}
-                  onSelect={() => select(inst.moduleId)}
-                />
-              ))}
-              {showBox && <OuterBox />}
+              {placements.map((pl) => {
+                if (!visible.has(pl.layerId)) return null;
+                const g = geometries.get(pl.partId);
+                if (!g) return null;
+                const dz = (layerIndex.get(pl.layerId) ?? 0) * explode;
+                const isSel = !!pl.moduleId && pl.moduleId === selectedId;
+                return (
+                  <Placed key={pl.key} pl={pl} dz={dz}>
+                    <PartMesh
+                      geometry={g}
+                      color={colorOf(pl)}
+                      selected={isSel && !pl.partId.includes(':')}
+                      onSelect={pl.moduleId ? () => select(pl.moduleId!) : undefined}
+                    />
+                  </Placed>
+                );
+              })}
+              {showBox && explode === 0 && <OuterBox />}
             </>
           )}
         </group>
       </group>
 
-      <Grid
-        position={[0, -0.01 - (single ? 0 : box.floorThickness), 0]}
-        args={[2000, 2000]}
-        cellSize={10}
-        sectionSize={50}
-        cellColor="#30363d"
-        sectionColor="#444c56"
-        fadeDistance={extent * 6}
-        infiniteGrid
+      <gridHelper
+        args={[Math.ceil((extent * 4) / 50) * 50, Math.ceil((extent * 4) / 10), '#444c56', '#2d333b']}
+        position={[0, -0.3 - (singleModule ? 0 : box.floorThickness), 0]}
       />
-      <OrbitControls makeDefault target={[0, (single ? (singleBB?.[2] ?? 0) : box.innerHeight) / 3, 0]} />
+      <OrbitControls makeDefault target={[0, (singleModule ? 20 : box.innerHeight) / 3, 0]} />
       <GizmoHelper alignment="bottom-right" margin={[64, 64]}>
         <GizmoViewport labelColor="white" axisHeadScale={0.9} />
       </GizmoHelper>
     </Canvas>
   );
-}
-
-function bboxOf(p: Float32Array): [number, number, number] {
-  let mx = 0, my = 0, mz = 0;
-  for (let i = 0; i < p.length; i += 3) {
-    if (p[i] > mx) mx = p[i];
-    if (p[i + 1] > my) my = p[i + 1];
-    if (p[i + 2] > mz) mz = p[i + 2];
-  }
-  return [mx, my, mz];
 }

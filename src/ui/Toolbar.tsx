@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { parseProject, serializeProject } from '../geometry';
 import { useStore } from '../state/store';
 import { downloadBlob, geometryClient } from '../worker/client';
+import { useCommand, type AppCommand } from './shortcuts';
 
 export function Toolbar() {
   const project = useStore((s) => s.project);
@@ -45,6 +46,22 @@ export function Toolbar() {
     }
   };
 
+  const undo = useStore((s) => s.undo);
+  const redo = useStore((s) => s.redo);
+  const canUndo = useStore((s) => s.canUndo);
+  const canRedo = useStore((s) => s.canRedo);
+  const setHelpOpen = useStore((s) => s.setHelpOpen);
+
+  const latest = useRef({ save, exportZip });
+  latest.current = { save, exportZip };
+  useCommand(
+    useCallback((cmd: AppCommand) => {
+      if (cmd === 'save') latest.current.save();
+      else if (cmd === 'open') fileRef.current?.click();
+      else void latest.current.exportZip();
+    }, []),
+  );
+
   return (
     <header className="toolbar">
       <div className="brand">
@@ -53,6 +70,8 @@ export function Toolbar() {
       </div>
       <input className="project-name" value={project.name} onChange={(e) => setName(e.target.value)} aria-label="Projektname" />
       <div className="row gap-s">
+        <button type="button" className="btn" title="Rückgängig (Strg+Z)" disabled={!canUndo} onClick={undo}>↶</button>
+        <button type="button" className="btn" title="Wiederholen (Strg+Y)" disabled={!canRedo} onClick={redo}>↷</button>
         <button
           type="button"
           className="btn"
@@ -62,11 +81,12 @@ export function Toolbar() {
         >
           Neu
         </button>
-        <button type="button" className="btn" onClick={() => fileRef.current?.click()}>Laden</button>
-        <button type="button" className="btn" onClick={save}>Speichern (JSON)</button>
-        <button type="button" className="btn primary" onClick={exportZip} disabled={exporting || project.modules.length === 0}>
+        <button type="button" className="btn" title="Strg+O" onClick={() => fileRef.current?.click()}>Laden</button>
+        <button type="button" className="btn" title="Strg+S" onClick={save}>Speichern (JSON)</button>
+        <button type="button" className="btn primary" title="Strg+E" onClick={exportZip} disabled={exporting || project.modules.length === 0}>
           {exporting ? 'Exportiere…' : 'Alle STL als ZIP'}
         </button>
+        <button type="button" className="btn" title="Tastaturbefehle (?)" onClick={() => setHelpOpen(true)}>⌨</button>
         <input
           ref={fileRef}
           type="file"

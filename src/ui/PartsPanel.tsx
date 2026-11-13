@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { areaUsage, moduleSize, partFileName, type PlacedInstance, type ValidationMessage } from '../geometry';
+import { areaUsage, fileNameFor, listParts, type PlacedInstance, type ValidationMessage } from '../geometry';
 import { useStore } from '../state/store';
 import { downloadBlob, geometryClient } from '../worker/client';
 import { fmt } from './SettingsPanels';
@@ -21,6 +21,18 @@ export function MessagesPanel({ messages }: { messages: ValidationMessage[] }) {
   );
 }
 
+function bboxSize(p: Float32Array): string {
+  if (p.length === 0) return '–';
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3)
+    for (let a = 0; a < 3; a++) {
+      if (p[i + a] < min[a]) min[a] = p[i + a];
+      if (p[i + a] > max[a]) max[a] = p[i + a];
+    }
+  return `${fmt(max[0] - min[0])} × ${fmt(max[1] - min[1])} × ${fmt(max[2] - min[2])} mm`;
+}
+
 export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
   const project = useStore((s) => s.project);
   const parts = useStore((s) => s.parts);
@@ -28,6 +40,7 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
   const selectedId = useStore((s) => s.selectedId);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const specs = listParts(project);
 
   const exportOne = async (id: string) => {
     setBusy(id);
@@ -42,7 +55,8 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
     }
   };
 
-  const totalGrams = project.modules.reduce((s, m) => s + (parts[m.id]?.volume ?? 0) * m.quantity * PLA_G_PER_MM3, 0);
+  const totalGrams = specs.reduce((s, spec) => s + (parts[spec.id]?.volume ?? 0) * spec.quantity * PLA_G_PER_MM3, 0);
+  const usage = project.layers.map((l) => `${l.name} ${fmt(areaUsage(project, layout, l.id), 0)} %`).join(' · ');
 
   return (
     <div className="parts">
@@ -50,23 +64,24 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
         <thead>
           <tr>
             <th>Datei</th>
-            <th>Maße (B × T × H)</th>
+            <th>Druckmaße</th>
             <th className="right">≈ PLA</th>
             <th>Prüfung</th>
             <th />
           </tr>
         </thead>
         <tbody>
-          {project.modules.map((m) => {
-            const p = parts[m.id];
-            const s = moduleSize(m, project);
+          {specs.map((spec) => {
+            const p = parts[spec.id];
             return (
-              <tr key={m.id} className={m.id === selectedId ? 'selected' : ''} onClick={() => select(m.id)}>
-                <td className="mono">{partFileName(m)}</td>
-                <td>
-                  {fmt(s.width)} × {fmt(s.depth)} × {fmt(s.height)} mm
-                </td>
-                <td className="right">{p ? `${fmt(p.volume * PLA_G_PER_MM3 * m.quantity, 0)} g` : '…'}</td>
+              <tr
+                key={spec.id}
+                className={`${spec.moduleId && spec.moduleId === selectedId ? 'selected' : ''} ${spec.kind !== 'module' ? 'sub' : ''}`}
+                onClick={() => spec.moduleId && select(spec.moduleId)}
+              >
+                <td className="mono">{fileNameFor(spec.name, spec.quantity)}</td>
+                <td>{p ? bboxSize(p.positions) : '…'}</td>
+                <td className="right">{p ? `${fmt(p.volume * PLA_G_PER_MM3 * spec.quantity, 0)} g` : '…'}</td>
                 <td>
                   {!p ? (
                     <span className="muted">…</span>
@@ -79,8 +94,8 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
                   )}
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
-                  <button type="button" className="btn small" disabled={busy !== null} onClick={() => exportOne(m.id)}>
-                    {busy === m.id ? '…' : 'STL'}
+                  <button type="button" className="btn small" disabled={busy !== null} onClick={() => exportOne(spec.id)}>
+                    {busy === spec.id ? '…' : 'STL'}
                   </button>
                 </td>
               </tr>
@@ -89,7 +104,7 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
         </tbody>
       </table>
       <p className="muted small">
-        Belegte Grundfläche {fmt(areaUsage(project, layout), 0)} % · gesamt ≈ {fmt(totalGrams, 0)} g PLA (Vollmaterial-Schätzung)
+        Belegte Grundfläche: {usage} · gesamt ≈ {fmt(totalGrams, 0)} g PLA (Vollmaterial-Schätzung)
       </p>
       {error && <p className="bad small">{error}</p>}
     </div>

@@ -49,12 +49,10 @@ export interface EffectiveCard {
   height: number;
   /** Dicke pro Karte inkl. Hülle. */
   thickness: number;
-  /** Stapeldicke aller Karten eines Fachs. */
-  stack: number;
 }
 
 /** Effektive Kartenmaße inklusive Sleeves-Aufschlag. */
-export function effectiveCard(m: CardTrayModule): EffectiveCard {
+export function effectiveCard(m: Pick<CardTrayModule, 'cardPreset' | 'customCardWidth' | 'customCardHeight' | 'sleeve' | 'cardThickness'>): EffectiveCard {
   const base =
     m.cardPreset === 'custom'
       ? { width: m.customCardWidth, height: m.customCardHeight }
@@ -65,7 +63,6 @@ export function effectiveCard(m: CardTrayModule): EffectiveCard {
     width: base.width + s.addWidth,
     height: base.height + s.addHeight,
     thickness,
-    stack: thickness * Math.max(0, m.cardCount),
   };
 }
 

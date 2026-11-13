@@ -2,7 +2,7 @@
 import type { Project } from '../geometry/types';
 
 export interface PartPreview {
-  moduleId: string;
+  partId: string;
   positions: Float32Array;
   indices: Uint32Array;
   volume: number;
@@ -12,7 +12,7 @@ export interface PartPreview {
 }
 
 export interface ExportedFile {
-  moduleId: string;
+  partId: string;
   name: string;
   watertight: boolean;
 }
@@ -20,7 +20,7 @@ export interface ExportedFile {
 export type WorkerRequest =
   | { type: 'build'; reqId: number; project: Project }
   | { type: 'exportZip'; reqId: number; project: Project }
-  | { type: 'exportPart'; reqId: number; project: Project; moduleId: string };
+  | { type: 'exportPart'; reqId: number; project: Project; partId: string };
 
 export type WorkerResponse =
   | { type: 'built'; reqId: number; parts: PartPreview[] }
