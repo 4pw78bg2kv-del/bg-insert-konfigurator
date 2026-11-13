@@ -44,8 +44,8 @@ class GeometryClient {
     return this.send<'exported'>({ type: 'exportZip', project });
   }
 
-  exportPart(project: Project, moduleId: string) {
-    return this.send<'exported'>({ type: 'exportPart', project, moduleId } as Omit<WorkerRequest, 'reqId'>);
+  exportPart(project: Project, partId: string) {
+    return this.send<'exported'>({ type: 'exportPart', project, partId } as Omit<WorkerRequest, 'reqId'>);
   }
 }
 

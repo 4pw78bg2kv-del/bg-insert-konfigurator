@@ -5,3 +5,4 @@ export * from './dimensions';
 export * from './layout';
 export * from './validate';
 export * from './project';
+export * from './parts';
