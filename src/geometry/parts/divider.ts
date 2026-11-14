@@ -88,7 +88,7 @@ export function buildDivider(k: ManifoldToplevel, s: Scope, m: CardTrayModule, p
 }
 
 /** Zeilenabstand als Vielfaches der Schrifthöhe. */
-const LINE_PITCH = 1.4;
+export const LINE_PITCH = 1.4;
 
 /**
  * Teilt eine Beschriftung auf ein oder zwei Zeilen auf – je nachdem, was die

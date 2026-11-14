@@ -23,14 +23,15 @@ geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
   oder passend zum Inhalt. Inhalt je Fach: leer, Token-Mulde (gerundet) oder Karten liegend/stehend, z. B. 2 Standardkarten
   liegend + 2 Minikarten stehend + 2 Token-Mulden in einer Box.
 - **Aufleger-Box:** Taschen in 16 Formen (Kreis, Oval, Rechteck, Dreieck, Raute, Vieleck, Stern, Pfeil, Doppelpfeil, Kreuz,
-  Herz, Blitz, Fahne, Sprechblase …), frei per Maus platzierbar, drehbar, mit **Maßzeichnung**, Griffmulden und
+  Herz, Blitz, Fahne, Sprechblase …) oder als **Freiform** (Umriss aus Punkten im Projekt-JSON), frei per Maus platzierbar,
+  drehbar, mit **Maßzeichnung**, Griffmulden, **Beschriftung im Taschenboden** (automatisch an der breitesten Stelle) und
   **Schnellgenerator** („9 Kreise für je 8 Aufleger mit Griffmulde“).
 - **Deckel:** Stülp-, Rast-, Schiebe-, Magnet- (4 Magnete, Größe wählbar) und Klappdeckel (Scharnier mit 1,75-mm-Filament).
 - **Beschriftung:** Name 2 mm tief in Deckel und Seitenwände, in druckgeeigneten Schriften (Droid Sans/Serif Bold, Optimer Bold).
   Die Schrift wird zusätzlich als eigenes Teil exportiert, um sie im Slicer in einer anderen Farbe zu drucken.
 - **Vorlagen-Galerie:** 14 fertige Module (Nachziehstapel, Kombi-Box, Spieler-Box, Sortierkasten mit Magnetdeckel,
   Kartenbox mit Schiebedeckel, Würfelschale, Stiftehalter, Münzen, Sechsecke, Sonderformen …).
-- **Spiel-Presets:** komplette Inserts zum Laden, derzeit **Frosthaven** (nach vermessenen Original-Inserts,
+- **Spiel-Presets:** komplette Inserts zum Laden, derzeit **Frosthaven** (lückenlos für 403 × 286 × 240 mm, mit Einräumplan,
   siehe [docs/frosthaven.md](docs/frosthaven.md)).
 - **Insert aus Teileliste:** Excel-/CSV-Vorlage herunterladen, Teile mit Kategorie, Bauteilart und Anzahl eintragen, wieder
   hochladen; daraus entstehen Kartenfächer, Aufleger-Boxen und Fächerboxen, die bei Platzmangel automatisch gestapelt werden.
@@ -38,6 +39,7 @@ geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
   (mit und ohne Hülle) zum Nachmessen.
 - **Layout:** automatische Anordnung, manuelle Position (Pfeiltasten), 90°-Drehung je Modul oder für die ganze Anordnung.
 - **Prüfungen:** Kollisionen, Überstand, Druckbett, zu hohe Karten/Module, zu kleine Fächer, zu enge Taschen, Schriftgröße.
+  **Lückenprüfung:** Füllgrad der Schachtel, Warnung bei Modulen, die mehr als 3 mm verrutschen können, Hinweis bei Luft nach oben.
 - **Export:** Binär-STL pro Teil oder alles als ZIP inkl. `projekt.json`, **Einräumanleitung (HTML)** und
   **Explosionszeichnung (SVG)** mit nummerierter Reihenfolge.
 - **Projekt:** Speichern/Laden als JSON (Dateien aus früheren Versionen werden übernommen), Autosave, Rückgängig/Wiederholen.

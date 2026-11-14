@@ -18,7 +18,7 @@ export const GAME_PRESETS: readonly GamePreset[] = [
     id: 'frosthaven',
     label: 'Frosthaven',
     description:
-      'Grundspiel: Gebietsaufleger, 4 Monsterboxen, Markerbox, Kartenfächer mit beschrifteten Hängetrennern für Ereignisse, Gebäude, Gegenstände, Szenarien, Tiere und Bosse.',
+      'Grundspiel, lückenlos (Füllgrad 99 %): 17 Charakterboxen, 18 Miniaturen-Schachteln, 22 Monsterboxen, zwei Gebietsaufleger-Schalen mit Originaltaschen, Kartenfächer mit beschrifteten Hängetrennern, Kartendecks und Marker.',
     icon: '❄',
     create: createFrosthavenProject,
   },

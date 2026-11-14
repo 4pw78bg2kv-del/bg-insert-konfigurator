@@ -287,7 +287,9 @@ export type ShapeKind =
   | 'lightning'
   | 'flag'
   | 'callout'
-  | 'ovalCallout';
+  | 'ovalCallout'
+  /** Freiform: Umriss aus `Pocket.points` (z. B. aus einem vorhandenen Insert übernommen). */
+  | 'custom';
 
 export interface Pocket {
   id: string;
@@ -297,6 +299,13 @@ export interface Pocket {
   h: number;
   /** Formabhängige Zusatzmaße (siehe `SHAPES`). */
   params: Record<string, number>;
+  /**
+   * Nur bei `custom`: Umriss als Punktliste (Mittelpunkt im Ursprung). Er wird auf
+   * Breite × Höhe skaliert, sodass sich die Tasche wie jede andere Form ändern lässt.
+   */
+  points?: [number, number][];
+  /** Beschriftung, vertieft in den Taschenboden (z. B. „5× Wasser“). */
+  label?: string;
   /** Mittelpunkt der Tasche, gemessen von der linken vorderen Außenecke. */
   x: number;
   y: number;

@@ -21,7 +21,7 @@ import {
   type Pt,
 } from '../geometry';
 import { useStore } from '../state/store';
-import { NumberField, Segmented, SelectField } from './fields';
+import { NumberField, Segmented, SelectField, TextField } from './fields';
 import { fmt } from './SettingsPanels';
 
 const path = (pts: Pt[], flip: (p: Pt) => Pt) => `M${pts.map((p) => flip(p).map((v) => v.toFixed(2)).join(',')).join('L')}Z`;
@@ -263,6 +263,7 @@ function PocketFields({ pk, onChange }: { pk: Pocket; onChange(patch: Partial<Po
           onChange={(v) => onChange({ gripAngle: Number(v) })}
         />
       )}
+      <TextField label="Beschriftung im Boden" value={pk.label ?? ''} onChange={(label) => onChange({ label })} />
       <p className="muted small">Taschentiefe {fmt(pk.count * pk.thickness + 0.4)} mm (Stapel + 0,4 mm).</p>
     </div>
   );
@@ -276,7 +277,7 @@ function Highlight({ on, children }: { on: boolean; children: React.ReactNode })
 function DimDrawing({ pk, onPick }: { pk: Pocket; onPick(key: string): void }) {
   const def = shapeDef(pk.shape);
   const params = shapeParams(pk.shape, pk.w, pk.h, pk.params);
-  const o = shapeOutline(pk.shape, pk.w, pk.h, params);
+  const o = shapeOutline(pk.shape, pk.w, pk.h, params, pk.points);
   const w = pk.w;
   const h = pk.h;
   const m = Math.max(w, h) * 0.32 + 6;

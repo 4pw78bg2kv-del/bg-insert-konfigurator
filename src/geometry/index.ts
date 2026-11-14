@@ -4,6 +4,7 @@ export * from './cards';
 export * from './dimensions';
 export * from './layout';
 export * from './validate';
+export * from './fill';
 export * from './project';
 export * from './parts';
 export * from './shapes';
