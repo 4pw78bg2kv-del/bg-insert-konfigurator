@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { areaUsage, fileNameFor, listParts, type PlacedInstance, type ValidationMessage } from '../geometry';
+import { areaUsage, fileNameFor, fitsBed, listHardware, listParts, maxLevel, type PlacedInstance, type ValidationMessage } from '../geometry';
 import { useStore } from '../state/store';
 import { downloadBlob, geometryClient } from '../worker/client';
 import { fmt } from './SettingsPanels';
@@ -21,8 +21,8 @@ export function MessagesPanel({ messages }: { messages: ValidationMessage[] }) {
   );
 }
 
-function bboxSize(p: Float32Array): string {
-  if (p.length === 0) return '–';
+function bbox(p: Float32Array): [number, number, number] | null {
+  if (p.length === 0) return null;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < p.length; i += 3)
@@ -30,7 +30,7 @@ function bboxSize(p: Float32Array): string {
       if (p[i + a] < min[a]) min[a] = p[i + a];
       if (p[i + a] > max[a]) max[a] = p[i + a];
     }
-  return `${fmt(max[0] - min[0])} × ${fmt(max[1] - min[1])} × ${fmt(max[2] - min[2])} mm`;
+  return [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 }
 
 export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
@@ -56,7 +56,9 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
   };
 
   const totalGrams = specs.reduce((s, spec) => s + (parts[spec.id]?.volume ?? 0) * spec.quantity * PLA_G_PER_MM3, 0);
-  const usage = project.layers.map((l) => `${l.name} ${fmt(areaUsage(project, layout, l.id), 0)} %`).join(' · ');
+  const levels = maxLevel(project);
+  const usage = Array.from({ length: levels }, (_, i) => `${levels > 1 ? `Stufe ${i + 1} ` : ''}${fmt(areaUsage(project, layout, i + 1), 0)} %`).join(' · ');
+  const hardware = listHardware(project);
 
   return (
     <div className="parts">
@@ -73,14 +75,22 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
         <tbody>
           {specs.map((spec) => {
             const p = parts[spec.id];
+            const b = p ? bbox(p.positions) : null;
+            const fits = !b || fitsBed(b[0], b[1], b[2], project.print);
             return (
               <tr
                 key={spec.id}
                 className={`${spec.moduleId && spec.moduleId === selectedId ? 'selected' : ''} ${spec.kind !== 'module' ? 'sub' : ''}`}
                 onClick={() => spec.moduleId && select(spec.moduleId)}
               >
-                <td className="mono">{fileNameFor(spec.name, spec.quantity)}</td>
-                <td>{p ? bboxSize(p.positions) : '…'}</td>
+                <td className="mono" title={spec.note}>
+                  {fileNameFor(spec.name, spec.quantity)}
+                  {spec.note && <span className="note"> ⓘ {spec.note}</span>}
+                </td>
+                <td className={fits ? '' : 'bad'} title={fits ? undefined : 'Zu groß für das Druckbett'}>
+                  {b ? `${fmt(b[0])} × ${fmt(b[1])} × ${fmt(b[2])} mm` : p ? '–' : '…'}
+                  {!fits && ' ⛔'}
+                </td>
                 <td className="right">{p ? `${fmt(p.volume * PLA_G_PER_MM3 * spec.quantity, 0)} g` : '…'}</td>
                 <td>
                   {!p ? (
@@ -103,6 +113,11 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
           })}
         </tbody>
       </table>
+      {hardware.length > 0 && (
+        <p className="small">
+          <strong>Zukaufteile:</strong> {hardware.map((h) => `${h.quantity}× ${h.name}`).join(' · ')}
+        </p>
+      )}
       <p className="muted small">
         Belegte Grundfläche: {usage} · gesamt ≈ {fmt(totalGrams, 0)} g PLA (Vollmaterial-Schätzung)
       </p>

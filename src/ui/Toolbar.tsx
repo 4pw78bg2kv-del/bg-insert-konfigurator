@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { parseProject, serializeProject } from '../geometry';
+import { assemblyHtml, computeLayout, parseProject, printSheetsHtml, serializeProject } from '../geometry';
 import { useStore } from '../state/store';
 import { downloadBlob, geometryClient } from '../worker/client';
 import { useCommand, type AppCommand } from './shortcuts';
@@ -85,6 +85,23 @@ export function Toolbar() {
         <button type="button" className="btn" title="Strg+S" onClick={save}>Speichern (JSON)</button>
         <button type="button" className="btn primary" title="Strg+E" onClick={exportZip} disabled={exporting || project.modules.length === 0}>
           {exporting ? 'Exportiere…' : 'Alle STL als ZIP'}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          title="Einräumanleitung mit Explosionszeichnung (ist auch im ZIP enthalten)"
+          disabled={project.modules.length === 0}
+          onClick={() => downloadBlob(assemblyHtml(project, computeLayout(project)), `${fileBase}_Einraeumanleitung.html`, 'text/html')}
+        >
+          Anleitung
+        </button>
+        <button
+          type="button"
+          className="btn"
+          title="A4-Rasterbogen mit Lineal und Kartenformaten 1:1 zum Ausdrucken"
+          onClick={() => downloadBlob(printSheetsHtml(project.grid.pitch, `Rasterbogen – ${project.name}`), 'Rasterbogen-A4.html', 'text/html')}
+        >
+          Rasterbogen
         </button>
         <button type="button" className="btn" title="Tastaturbefehle (?)" onClick={() => setHelpOpen(true)}>⌨</button>
         <input

@@ -8,10 +8,13 @@ import { geometryClient } from '../worker/client';
 
 export function useLayout(): { layout: PlacedInstance[]; messages: ValidationMessage[] } {
   const project = useStore((s) => s.project);
+  // Nach dem Laden der Schriften neu prüfen (Textgrößen)
+  const fontsVersion = useStore((s) => s.fontsVersion);
   return useMemo(() => {
+    void fontsVersion;
     const layout = computeLayout(project);
     return { layout, messages: validateProject(project, layout) };
-  }, [project]);
+  }, [project, fontsVersion]);
 }
 
 /** Baut die Geometrie (entprellt) neu, sobald sich das Projekt ändert. */

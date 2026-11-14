@@ -8,7 +8,7 @@
  * damit es in UI, Web Worker und Tests gleichermaßen genutzt werden kann.
  */
 
-export const PROJECT_FORMAT_VERSION = 2;
+export const PROJECT_FORMAT_VERSION = 3;
 
 /** Maße der Original-Spielschachtel (Karton). */
 export interface BoxSettings {
@@ -26,9 +26,20 @@ export interface BoxSettings {
   headroom: number;
 }
 
+export type Material = 'PLA' | 'PETG';
+
 /** Globale Druckparameter, gelten für alle Module. */
 export interface PrintSettings {
-  /** Spaltmaß zwischen Teilen, zur Schachtelwand und bei Steckverbindungen (Standard 0,2 mm). */
+  material: Material;
+  /** Düsendurchmesser (für Empfehlungen und Warnungen). */
+  nozzle: number;
+  /** Druckerprofil (`custom` = eigene Bettgröße). */
+  printer: string;
+  /** Nutzbare Druckfläche und -höhe. */
+  bedX: number;
+  bedY: number;
+  bedZ: number;
+  /** Spaltmaß zwischen Teilen, zur Schachtelwand und bei Steckverbindungen. */
   clearance: number;
   /** Außenwandstärke der gedruckten Module. */
   wallThickness: number;
@@ -36,31 +47,53 @@ export interface PrintSettings {
   floorThickness: number;
   /** Stärke von festen Trennwänden innerhalb der Module. */
   dividerThickness: number;
+  /** Fase an der Unterkante gegen den „Elefantenfuß“ (0 = aus). */
+  bottomChamfer: number;
 }
 
 /**
- * Innenraster: Alle Module belegen ganze Rasterzellen. Optional sorgt eine
- * Grundplatte mit Rippen dafür, dass die Module ineinandergreifen und nicht
- * verrutschen (die Module haben passende Nuten im Boden).
+ * Innenraster: Modulgrößen werden auf ganze Rastereinheiten aufgerundet und
+ * die Module an den Rasterlinien ausgerichtet.
  */
 export interface GridSettings {
   enabled: boolean;
-  /** Gewünschte Zellgröße; die tatsächliche Größe füllt die Schachtel exakt aus. */
-  targetCell: number;
-  /** Grundplatte mit Verriegelungsrippen erzeugen. */
-  baseplate: boolean;
-  /** Maximale Kachelgröße der Grundplatte (Druckbett). */
-  maxTileSize: number;
+  /** Rastermaß (z. B. 5 mm oder 21 mm). */
+  pitch: number;
+  /**
+   * `stretch` = Rastermaß minimal anpassen, damit die Schachtel genau gefüllt wird;
+   * `exact` = Rastermaß exakt, der Rest bleibt als Rand.
+   */
+  fit: 'stretch' | 'exact';
+  /** Wohin der Platz beim Aufrunden geht: in den Innenraum oder in dickere Wände. */
+  grow: 'inner' | 'wall';
 }
 
-/** Eine Ebene für gestapelte Module. Ebene 0 liegt unten. */
-export interface Layer {
-  id: string;
-  name: string;
-  /** `auto` = teilt sich die verbleibende Höhe mit anderen Auto-Ebenen. */
-  heightMode: 'auto' | 'fixed';
-  height: number;
-  visible: boolean;
+/** Grundplatte: Rippen entlang der Modulkanten halten die unterste Lage fest. */
+export interface BaseplateSettings {
+  enabled: boolean;
+}
+
+export type FontId = 'sans' | 'serif' | 'optimer';
+
+/** Gemeinsame Schrift-Einstellungen aller Beschriftungen. */
+export interface LabelStyle {
+  font: FontId;
+  /** Tiefe der vertieften Schrift. */
+  depth: number;
+  /** Höhe der erhabenen Schrift auf Kartentrennern. */
+  raised: number;
+}
+
+export type LabelSides = 'none' | 'frontBack' | 'leftRight' | 'front';
+
+/** Beschriftung eines Moduls (vertieft, als Einleger in anderer Farbe druckbar). */
+export interface ModuleLabel {
+  /** Leer = Modulname. */
+  text: string;
+  onLid: boolean;
+  sides: LabelSides;
+  /** Schrifthöhe (Versalhöhe); 0 = automatisch. */
+  size: number;
 }
 
 export type SleeveType = 'none' | 'standard' | 'premium';
@@ -73,50 +106,8 @@ export type CardPresetId =
   | 'tarot'
   | 'square';
 
-/** Position eines Moduls in seiner Ebene. */
-export interface Placement {
-  /** `auto` = automatische Anordnung, `manual` = feste Position. */
-  mode: 'auto' | 'manual';
-  /** X-Position der linken vorderen Ecke in mm (ohne Raster). */
-  x: number;
-  /** Y-Position der linken vorderen Ecke in mm (ohne Raster). */
-  y: number;
-  /** Rasterzelle X (mit Raster). */
-  gx: number;
-  /** Rasterzelle Y (mit Raster). */
-  gy: number;
-  /** Um 90° um die Hochachse gedreht. */
-  rotated: boolean;
-}
-
-/** Griffmulden-Varianten. */
-export type FingerCutout = 'none' | 'notch' | 'toFloor';
-
-interface ModuleBase {
-  id: string;
-  /** Anzeigename, wird auch für den STL-Dateinamen verwendet. */
-  name: string;
-  /** Benötigte Stückzahl (jede Kopie wird in der Schachtel platziert). */
-  quantity: number;
-  /** Ebene, in der das Modul liegt. */
-  layerId: string;
-  placement: Placement;
-  /**
-   * `auto` = so hoch wie nötig (Kartenfach) bzw. Ebenenhöhe (Box),
-   * `layer` = volle Ebenenhöhe, `custom` = eigene Höhe.
-   */
-  heightMode: 'auto' | 'layer' | 'custom';
-  customHeight: number;
-  /** Griffmulde in den Wänden. */
-  fingerCutout: FingerCutout;
-  /** Griffloch im Boden (Inhalt von unten herausdrücken). */
-  floorHole: boolean;
-}
-
-export type DividerMode = 'fixed' | 'loose' | 'toothed';
-
-export interface CardTrayModule extends ModuleBase {
-  type: 'cardTray';
+/** Kartenangaben (für Kartenfach und Karten-Fächer in Boxen). */
+export interface CardSpec {
   cardPreset: CardPresetId | 'custom';
   /** Kartenbreite bei `custom` (ohne Hülle). */
   customCardWidth: number;
@@ -125,6 +116,63 @@ export interface CardTrayModule extends ModuleBase {
   sleeve: SleeveType;
   /** Dicke einer Karte ohne Hülle. */
   cardThickness: number;
+}
+
+/** Position eines Moduls in der Schachtel. */
+export interface Placement {
+  /** `auto` = automatische Anordnung, `manual` = feste Position. */
+  mode: 'auto' | 'manual';
+  /** X/Y-Position der linken vorderen Ecke in mm (mit Raster: wird auf die Rasterlinie gerundet). */
+  x: number;
+  y: number;
+  /** Um 90° um die Hochachse gedreht. */
+  rotated: boolean;
+}
+
+/** Griffmulden-Varianten. */
+export type FingerCutout = 'none' | 'notch' | 'toFloor';
+
+/** Deckelarten. */
+export type LidType = 'none' | 'lift' | 'snap' | 'slide' | 'magnet' | 'hinge';
+
+/**
+ * Höhe:
+ * - `auto`   = so hoch wie der Inhalt es verlangt,
+ * - `fill`   = bis unter den Schachteldeckel (bzw. Kopfraum),
+ * - `custom` = eigene Höhe.
+ */
+export type HeightMode = 'auto' | 'fill' | 'custom';
+
+interface ModuleBase {
+  id: string;
+  /** Anzeigename, wird auch für den STL-Dateinamen verwendet. */
+  name: string;
+  /** Benötigte Stückzahl (jede Kopie wird in der Schachtel platziert). */
+  quantity: number;
+  /**
+   * Stapelstufe: 1 liegt auf dem Boden, 2 liegt auf dem, was darunter liegt
+   * (Module unterschiedlicher Höhe sind erlaubt – das Modul „fällt“ auf die
+   * höchste Oberkante unter sich).
+   */
+  level: number;
+  placement: Placement;
+  heightMode: HeightMode;
+  customHeight: number;
+  /** Griffmulde in den Wänden. */
+  fingerCutout: FingerCutout;
+  /** Griffloch im Boden (Inhalt von unten herausdrücken). */
+  floorHole: boolean;
+  lid: LidType;
+  /** Magnetgröße bei Magnetdeckel (Durchmesser × Höhe). */
+  magnetDiameter: number;
+  magnetHeight: number;
+  label: ModuleLabel;
+}
+
+export type DividerMode = 'fixed' | 'loose' | 'toothed';
+
+export interface CardTrayModule extends ModuleBase, CardSpec {
+  type: 'cardTray';
   /** `standing` = Karten hochkant, `flat` = Karten liegend. */
   orientation: 'standing' | 'flat';
   /** Hochformat (lange Seite senkrecht bzw. in Tiefe) oder Querformat. */
@@ -155,40 +203,119 @@ export interface CardTrayModule extends ModuleBase {
   tabHeight: number;
   /** Breite der Lasche in Prozent der Trennerbreite. */
   tabWidthPercent: number;
-  /** Laschen versetzt (links/mitte/rechts) für bessere Lesbarkeit. */
+  /** Laschen versetzt (links/Mitte/rechts) für bessere Lesbarkeit. */
   tabStaggered: boolean;
   /** Zusätzliches Spiel um den Kartenstapel (gesamt pro Achse). */
   play: number;
+  /** Einzeln beschriftete Trenner (ein Eintrag = ein Trenner). */
+  dividerLabels: string[];
 }
 
-export type LidType = 'none' | 'snap';
+// ---------------------------------------------------------------------------
+// Fächerbox: freie Aufteilung als Baum aus Teilungen
 
-/** Eine Reihe einer Rasterbox: relative Tiefe und relative Spaltenbreiten. */
-export interface GridRow {
+/** `fr` = Anteil am Rest, `mm` = feste Größe, `auto` = so groß wie der Inhalt. */
+export type SizeUnit = 'fr' | 'mm' | 'auto';
+
+export type CellContent =
+  | { type: 'empty' }
+  /** Token-Mulde: gerundeter Übergang zum Boden, damit man Teile herausschieben kann. */
+  | { type: 'scoop'; sides: 'front' | 'both' }
+  /** Karten liegend (Stapel) oder stehend (hintereinander). */
+  | ({ type: 'cards'; orientation: 'flat' | 'standing'; format: 'portrait' | 'landscape'; count: number; raise: boolean } & CardSpec);
+
+interface CellBase {
+  id: string;
+  /** Größe innerhalb der übergeordneten Teilung. */
   size: number;
-  columns: number[];
+  unit: SizeUnit;
 }
+
+export interface CellLeaf extends CellBase {
+  kind: 'leaf';
+  content: CellContent;
+}
+
+export interface CellSplit extends CellBase {
+  kind: 'split';
+  /** `x` = nebeneinander (Spalten), `y` = hintereinander (Reihen, von vorne nach hinten). */
+  dir: 'x' | 'y';
+  children: CellNode[];
+}
+
+export type CellNode = CellLeaf | CellSplit;
 
 export interface GridBoxModule extends ModuleBase {
   type: 'gridBox';
-  /** Außenbreite (X) ohne Innenraster. */
+  /** `auto` = Größe aus dem Inhalt, `manual` = Außenmaße vorgeben. */
+  sizeMode: 'auto' | 'manual';
+  /** Außenbreite (X) bei `manual` (mit Raster: aufgerundet). */
   width: number;
-  /** Außentiefe (Y) ohne Innenraster. */
+  /** Außentiefe (Y) bei `manual`. */
   depth: number;
-  /** Breite in Rasterzellen (mit Innenraster). */
-  widthCells: number;
-  /** Tiefe in Rasterzellen (mit Innenraster). */
-  depthCells: number;
-  /** Freie Aufteilung: Reihen von vorne nach hinten, je mit eigenen Spalten. */
-  layout: GridRow[];
+  /** Aufteilung. */
+  root: CellNode;
   /** Trennwände werden um diesen Betrag niedriger als die Außenwand gedruckt. */
   dividerLowering: number;
   /** Auf welchen Seiten die Griffmulden sitzen. */
   fingerSides: 'front' | 'frontBack' | 'leftRight';
-  lid: LidType;
 }
 
-export type InsertModule = CardTrayModule | GridBoxModule;
+// ---------------------------------------------------------------------------
+// Aufleger-Box: Taschen in Sonderformen
+
+export type ShapeKind =
+  | 'rect'
+  | 'roundRect'
+  | 'ellipse'
+  | 'triangle'
+  | 'rightTriangle'
+  | 'diamond'
+  | 'polygon'
+  | 'star'
+  | 'arrow'
+  | 'doubleArrow'
+  | 'cross'
+  | 'heart'
+  | 'lightning'
+  | 'flag'
+  | 'callout'
+  | 'ovalCallout';
+
+export interface Pocket {
+  id: string;
+  shape: ShapeKind;
+  /** Breite und Höhe des Aufleger-Umrisses (ohne Spiel). */
+  w: number;
+  h: number;
+  /** Formabhängige Zusatzmaße (siehe `SHAPES`). */
+  params: Record<string, number>;
+  /** Mittelpunkt der Tasche, gemessen von der linken vorderen Außenecke. */
+  x: number;
+  y: number;
+  /** Drehung in Grad (gegen den Uhrzeigersinn). */
+  rotation: number;
+  /** Anzahl Aufleger im Stapel. */
+  count: number;
+  /** Dicke eines Auflegers. */
+  thickness: number;
+  /** Griffmulden: keine, eine oder zwei gegenüberliegende. */
+  grip: 'none' | 'one' | 'two';
+  /** Richtung der Griffmulde in Grad (0 = nach rechts, 270 = nach vorne). */
+  gripAngle: number;
+}
+
+export interface ShapeBoxModule extends ModuleBase {
+  type: 'shapeBox';
+  sizeMode: 'auto' | 'manual';
+  width: number;
+  depth: number;
+  pockets: Pocket[];
+  /** Zusätzliches Spiel um jeden Aufleger (zum Spaltmaß hinzu). */
+  pocketPlay: number;
+}
+
+export type InsertModule = CardTrayModule | GridBoxModule | ShapeBoxModule;
 export type ModuleType = InsertModule['type'];
 
 export interface Project {
@@ -197,11 +324,12 @@ export interface Project {
   box: BoxSettings;
   print: PrintSettings;
   grid: GridSettings;
-  layers: Layer[];
+  baseplate: BaseplateSettings;
+  labels: LabelStyle;
   modules: InsertModule[];
 }
 
-/** Berechnete Außenmaße eines Moduls (unrotiert, ohne Deckel). */
+/** Berechnete Außenmaße eines Moduls (unrotiert, inkl. Deckel). */
 export interface ModuleSize {
   width: number;
   depth: number;
@@ -212,7 +340,7 @@ export interface ModuleSize {
 export interface PlacedInstance {
   moduleId: string;
   copyIndex: number;
-  layerId: string;
+  level: number;
   x: number;
   y: number;
   /** Unterkante des Moduls. */
@@ -223,6 +351,8 @@ export interface PlacedInstance {
   /** Höhe inkl. Deckel. */
   height: number;
   rotated: boolean;
+  /** Module, auf denen diese Kopie aufliegt (leer = Boden bzw. Grundplatte). */
+  supports: string[];
 }
 
 export type WarningLevel = 'error' | 'warning' | 'info';
@@ -233,24 +363,36 @@ export interface ValidationMessage {
   text: string;
 }
 
+export type PartKind = 'module' | 'lid' | 'divider' | 'baseplate' | 'inlay' | 'lidInlay';
+
 /** Ein einzelnes druckbares Teil (eine STL-Datei). */
 export interface PartSpec {
-  /** Eindeutige ID, z. B. `<modulId>`, `<modulId>:lid`, `<modulId>:div:1`, `baseplate:<key>`. */
+  /** Eindeutige ID, z. B. `<modulId>`, `<modulId>:lid`, `<modulId>:div:1`, `baseplate:0`. */
   id: string;
-  kind: 'module' | 'lid' | 'divider' | 'baseplate';
+  kind: PartKind;
   moduleId?: string;
-  /** Variante (Laschenposition bei Trennern). */
+  /** Laschenposition bei Trennern (0 = links, 1 = Mitte, 2 = rechts). */
   variant?: number;
-  /** Kachel-Maße bei Grundplatten. */
+  /** Beschriftung bei einzeln beschrifteten Trennern. */
+  text?: string;
+  /** Kachel bei Grundplatten. */
   tile?: BaseplateTile;
   name: string;
   quantity: number;
+  /** Hinweis für den Druck (z. B. Farbwechsel). */
+  note?: string;
 }
 
 export interface BaseplateTile {
-  /** Erste Rasterlinie und Anzahl Zellen je Achse. */
-  cx: number;
-  cy: number;
-  nx: number;
-  ny: number;
+  index: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Zukaufteile (Magnete, Scharnierstifte). */
+export interface HardwareItem {
+  name: string;
+  quantity: number;
 }

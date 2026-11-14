@@ -2,12 +2,16 @@
  * Einstiegspunkt der Geometrie: erzeugt für ein Teil (PartSpec) ein Mesh in
  * Druckorientierung (Unterseite auf Z = 0, linke vordere Ecke im Ursprung).
  */
-import { moduleContext, moduleSize } from './dimensions';
+import { lidInfo, baseWalls } from './dimensions';
 import { Scope, type ManifoldToplevel, type Manifold } from './kernel';
-import { buildBaseplate, buildGrooves } from './parts/baseplate';
-import { buildCardTray } from './parts/cardTray';
+import { cardTrayLayout, gridBoxLayout, moduleSize } from './layout';
+import { labelText } from './parts';
+import { buildBaseplate } from './parts/baseplate';
+import { buildCardTrayParts } from './parts/cardTray';
 import { buildDivider } from './parts/divider';
-import { buildGridBox, buildLid } from './parts/gridBox';
+import { buildGridBoxParts, type BodyResult } from './parts/gridBox';
+import { buildLidInlay, buildLidPart, type LidContext } from './parts/lids';
+import { buildShapeBoxParts } from './parts/shapeBox';
 import { checkWatertight, parseBinaryStl, writeBinaryStl } from './stl';
 import type { InsertModule, PartSpec, Project } from './types';
 
@@ -27,14 +31,28 @@ export interface PartResult {
   status: string;
 }
 
-function buildModuleSolid(k: ManifoldToplevel, s: Scope, m: InsertModule, p: Project): Manifold {
-  const solid = m.type === 'cardTray' ? buildCardTray(k, s, m, p) : buildGridBox(k, s, m, p);
-  const ctx = moduleContext(m, p);
-  if (!ctx.layer.interlock || !ctx.grid.enabled) return solid;
+function bodyParts(k: ManifoldToplevel, s: Scope, m: InsertModule, p: Project): BodyResult {
+  if (m.type === 'cardTray') return buildCardTrayParts(k, s, m, p);
+  if (m.type === 'gridBox') return buildGridBoxParts(k, s, m, p);
+  return buildShapeBoxParts(k, s, m, p);
+}
+
+function lidContext(m: InsertModule, p: Project): LidContext {
   const size = moduleSize(m, p);
-  const cellX = m.placement.rotated ? ctx.grid.cellY : ctx.grid.cellX;
-  const cellY = m.placement.rotated ? ctx.grid.cellX : ctx.grid.cellY;
-  return s.track(solid.subtract(buildGrooves(k, s, size.width, size.depth, cellX, cellY, ctx.grid)));
+  const m2 = Math.max(2, p.print.wallThickness);
+  const walls = m.type === 'shapeBox' ? { left: m2, right: m2, front: m2, back: m2 } : bodyWalls(m, p);
+  return { W: size.width, D: size.depth, walls, hollow: m.type !== 'shapeBox' };
+}
+
+function bodyWalls(m: InsertModule, p: Project) {
+  // Die tatsächlichen Wände (inkl. Rundungsrest) liefert das Modul-Layout.
+  return layoutWalls(m, p) ?? baseWalls(m, p);
+}
+
+function layoutWalls(m: InsertModule, p: Project) {
+  if (m.type === 'cardTray') return cardTrayLayout(m, p).walls;
+  if (m.type === 'gridBox') return gridBoxLayout(m, p).walls;
+  return null;
 }
 
 function buildSolid(k: ManifoldToplevel, s: Scope, spec: PartSpec, p: Project): Manifold {
@@ -46,13 +64,20 @@ function buildSolid(k: ManifoldToplevel, s: Scope, spec: PartSpec, p: Project): 
   if (!m) throw new Error(`Modul ${spec.moduleId} nicht gefunden`);
   switch (spec.kind) {
     case 'module':
-      return buildModuleSolid(k, s, m, p);
+      return bodyParts(k, s, m, p).body;
+    case 'inlay': {
+      const t = bodyParts(k, s, m, p).text;
+      if (!t) throw new Error('Keine Beschriftung');
+      return t;
+    }
     case 'lid':
-      if (m.type !== 'gridBox') throw new Error('Deckel nur für Rasterboxen');
-      return buildLid(k, s, m, p);
+      if (lidInfo(m, p).type === 'none') throw new Error('Modul hat keinen Deckel');
+      return buildLidPart(k, s, m, p, lidContext(m, p), m.label.onLid ? labelText(m) : '');
+    case 'lidInlay':
+      return buildLidInlay(k, s, m, p, lidContext(m, p), labelText(m));
     case 'divider':
       if (m.type !== 'cardTray') throw new Error('Trenner nur für Kartenfächer');
-      return buildDivider(k, s, m, p, spec.variant ?? 1);
+      return buildDivider(k, s, m, p, spec.variant ?? 1, spec.text);
   }
 }
 

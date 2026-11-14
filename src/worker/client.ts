@@ -54,8 +54,8 @@ export function geometryClient(): GeometryClient {
   return (client ??= new GeometryClient());
 }
 
-export function downloadBlob(data: ArrayBuffer | string, fileName: string, mime: string) {
-  const blob = new Blob([data], { type: mime });
+export function downloadBlob(data: ArrayBuffer | Uint8Array | string, fileName: string, mime: string) {
+  const blob = new Blob([data as BlobPart], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

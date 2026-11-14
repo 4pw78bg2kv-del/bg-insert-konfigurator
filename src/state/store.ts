@@ -5,20 +5,23 @@
  */
 import { create } from 'zustand';
 import {
+  TEMPLATES,
   computeLayout,
   gridInfo,
   createCardTray,
   createDefaultProject,
   createGridBox,
-  createLayer,
+  createShapeBox,
   duplicateModule,
+  maxLevel,
   parseProject,
   serializeProject,
   suggestName,
+  type BaseplateSettings,
   type BoxSettings,
   type GridSettings,
   type InsertModule,
-  type Layer,
+  type LabelStyle,
   type ModuleType,
   type PrintSettings,
   type Project,
@@ -42,29 +45,38 @@ export type ViewMode = 'all' | 'single';
 interface State {
   project: Project;
   selectedId: string | null;
-  activeLayerId: string;
+  /** Gewähltes Fach im Fächer-Editor bzw. gewählte Tasche der Aufleger-Box. */
+  selectedCellId: string | null;
   parts: Record<string, PartPreview>;
   building: boolean;
   buildError: string | null;
   viewMode: ViewMode;
   showBox: boolean;
-  /** Abstand zwischen den Ebenen in der Explosionsansicht (mm). */
+  /** Abstand zwischen den Stapelstufen in der Explosionsansicht (mm). */
   explode: number;
+  /** Nur Stapelstufen bis hierhin anzeigen (0 = alle). */
+  levelView: number;
+  galleryOpen: boolean;
+  inventoryOpen: boolean;
+  /** Wird erhöht, sobald die Schriften geladen sind (für die Prüfung). */
+  fontsVersion: number;
 
   setName(name: string): void;
   setBox(patch: Partial<BoxSettings>): void;
   setPrint(patch: Partial<PrintSettings>): void;
   setGrid(patch: Partial<GridSettings>): void;
-  addLayer(): void;
-  updateLayer(id: string, patch: Partial<Layer>): void;
-  removeLayer(id: string): void;
-  setActiveLayer(id: string): void;
+  setBaseplate(patch: Partial<BaseplateSettings>): void;
+  setLabels(patch: Partial<LabelStyle>): void;
   addModule(type: ModuleType): void;
+  addTemplate(id: string): void;
+  /** Ersetzt (replace) oder ergänzt Module, z. B. aus dem Inventar-Import. */
+  insertModules(mods: InsertModule[], replace: boolean): void;
   updateModule(id: string, patch: Partial<InsertModule>): void;
   removeModule(id: string): void;
   duplicate(id: string): void;
   move(id: string, dir: -1 | 1): void;
   select(id: string | null): void;
+  selectCell(id: string | null): void;
   loadProject(p: Project): void;
   newProject(): void;
   setParts(parts: PartPreview[]): void;
@@ -72,11 +84,17 @@ interface State {
   setViewMode(v: ViewMode): void;
   setShowBox(v: boolean): void;
   setExplode(v: number): void;
-  /** Verschiebt ein Modul (fixiert es dabei). Mit Raster in Zellen, sonst in mm. */
+  setLevelView(v: number): void;
+  setGalleryOpen(v: boolean): void;
+  setInventoryOpen(v: boolean): void;
+  bumpFonts(): void;
+  /** Verschiebt ein Modul (fixiert es dabei). Mit Raster um eine Zelle, sonst in mm. */
   nudge(id: string, dx: number, dy: number, stepMm?: number): void;
   rotate(id: string): void;
-  /** Modul in die Ebene darüber (+1) oder darunter (−1) verschieben. */
-  shiftLayer(id: string, dir: -1 | 1): void;
+  /** Alle Module um 90° drehen und neu anordnen. */
+  rotateAll(): void;
+  /** Modul eine Stapelstufe höher (+1) oder tiefer (−1) legen. */
+  shiftLevel(id: string, dir: -1 | 1): void;
   selectNext(dir: -1 | 1): void;
   undo(): void;
   redo(): void;
@@ -102,66 +120,76 @@ function round2(v: number) {
 
 const initial = loadInitial();
 
+function uniqueName(m: InsertModule, modules: InsertModule[]) {
+  const taken = new Set(modules.map((x) => x.name));
+  const baseName = m.name;
+  for (let n = 2; taken.has(m.name); n++) m.name = `${baseName} ${n}`;
+}
+
+const mapModule = (s: State, id: string, fn: (m: InsertModule) => InsertModule) => ({
+  project: { ...s.project, modules: s.project.modules.map((m) => (m.id === id ? fn(m) : m)) },
+});
+
 export const useStore = create<State>((set) => ({
   project: initial,
   selectedId: null,
-  activeLayerId: initial.layers[0].id,
+  selectedCellId: null,
   parts: {},
   building: false,
   buildError: null,
   viewMode: 'all',
   showBox: true,
   explode: 0,
+  levelView: 0,
+  galleryOpen: false,
+  inventoryOpen: false,
+  fontsVersion: 0,
 
   setName: (name) => set((s) => ({ project: { ...s.project, name } })),
   setBox: (patch) => set((s) => ({ project: { ...s.project, box: { ...s.project.box, ...patch } } })),
   setPrint: (patch) => set((s) => ({ project: { ...s.project, print: { ...s.project.print, ...patch } } })),
   setGrid: (patch) => set((s) => ({ project: { ...s.project, grid: { ...s.project.grid, ...patch } } })),
-
-  addLayer: () =>
-    set((s) => {
-      const layer = createLayer(s.project.layers.length);
-      return { project: { ...s.project, layers: [...s.project.layers, layer] }, activeLayerId: layer.id };
-    }),
-  updateLayer: (id, patch) =>
-    set((s) => ({ project: { ...s.project, layers: s.project.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)) } })),
-  removeLayer: (id) =>
-    set((s) => {
-      if (s.project.layers.length <= 1) return {};
-      const layers = s.project.layers.filter((l) => l.id !== id);
-      const fallback = layers[0].id;
-      // Module der gelöschten Ebene wandern in die unterste Ebene.
-      const modules = s.project.modules.map((m) => (m.layerId === id ? { ...m, layerId: fallback } : m));
-      return { project: { ...s.project, layers, modules }, activeLayerId: s.activeLayerId === id ? fallback : s.activeLayerId };
-    }),
-  setActiveLayer: (activeLayerId) => set({ activeLayerId }),
+  setBaseplate: (patch) => set((s) => ({ project: { ...s.project, baseplate: { ...s.project.baseplate, ...patch } } })),
+  setLabels: (patch) => set((s) => ({ project: { ...s.project, labels: { ...s.project.labels, ...patch } } })),
 
   addModule: (type) =>
     set((s) => {
-      const m = type === 'cardTray' ? createCardTray() : createGridBox();
-      m.layerId = s.project.layers.some((l) => l.id === s.activeLayerId) ? s.activeLayerId : s.project.layers[0].id;
-      const taken = new Set(s.project.modules.map((x) => x.name));
-      for (let n = 2; taken.has(m.name); n++) m.name = `${suggestName(m)} ${n}`;
-      return { project: { ...s.project, modules: [...s.project.modules, m] }, selectedId: m.id };
+      const m = type === 'cardTray' ? createCardTray() : type === 'gridBox' ? createGridBox() : createShapeBox();
+      uniqueName(m, s.project.modules);
+      return { project: { ...s.project, modules: [...s.project.modules, m] }, selectedId: m.id, selectedCellId: null };
+    }),
+  addTemplate: (id) =>
+    set((s) => {
+      const t = TEMPLATES.find((x) => x.id === id);
+      if (!t) return {};
+      const m = t.create();
+      uniqueName(m, s.project.modules);
+      return { project: { ...s.project, modules: [...s.project.modules, m] }, selectedId: m.id, selectedCellId: null, galleryOpen: false };
+    }),
+  insertModules: (mods, replace) =>
+    set((s) => {
+      const base = replace ? [] : s.project.modules;
+      const list = [...base];
+      for (const m of mods) {
+        uniqueName(m, list);
+        list.push(m);
+      }
+      return { project: { ...s.project, modules: list }, selectedId: mods[0]?.id ?? null, selectedCellId: null };
     }),
   updateModule: (id, patch) =>
-    set((s) => ({
-      project: {
-        ...s.project,
-        modules: s.project.modules.map((m) => {
-          if (m.id !== id) return m;
-          const next = { ...m, ...patch } as InsertModule;
-          // Automatisch vergebene Namen folgen den Parametern (z. B. Kartengröße).
-          if (patch.name === undefined) {
-            const auto = suggestName(m);
-            if (m.name === auto) next.name = suggestName(next);
-            else if (m.name.startsWith(`${auto} `) && /^\d+$/.test(m.name.slice(auto.length + 1)))
-              next.name = `${suggestName(next)}${m.name.slice(auto.length)}`;
-          }
-          return next;
-        }),
-      },
-    })),
+    set((s) =>
+      mapModule(s, id, (m) => {
+        const next = { ...m, ...patch } as InsertModule;
+        // Automatisch vergebene Namen folgen den Parametern (z. B. Kartengröße).
+        if (patch.name === undefined) {
+          const auto = suggestName(m);
+          if (m.name === auto) next.name = suggestName(next);
+          else if (m.name.startsWith(`${auto} `) && /^\d+$/.test(m.name.slice(auto.length + 1)))
+            next.name = `${suggestName(next)}${m.name.slice(auto.length)}`;
+        }
+        return next;
+      }),
+    ),
   removeModule: (id) =>
     set((s) => ({
       project: { ...s.project, modules: s.project.modules.filter((m) => m.id !== id) },
@@ -185,22 +213,19 @@ export const useStore = create<State>((set) => ({
       [modules[i], modules[j]] = [modules[j], modules[i]];
       return { project: { ...s.project, modules } };
     }),
-  select: (id) =>
-    set((s) => {
-      const m = s.project.modules.find((x) => x.id === id);
-      return { selectedId: id, activeLayerId: m ? m.layerId : s.activeLayerId };
-    }),
-  loadProject: (p) => set({ project: p, selectedId: null, parts: {}, activeLayerId: p.layers[0].id }),
-  newProject: () =>
-    set(() => {
-      const p = createDefaultProject();
-      return { project: p, selectedId: null, parts: {}, activeLayerId: p.layers[0].id };
-    }),
+  select: (id) => set((s) => ({ selectedId: id, selectedCellId: id === s.selectedId ? s.selectedCellId : null })),
+  selectCell: (selectedCellId) => set({ selectedCellId }),
+  loadProject: (p) => set({ project: p, selectedId: null, selectedCellId: null, parts: {} }),
+  newProject: () => set({ project: createDefaultProject(), selectedId: null, selectedCellId: null, parts: {} }),
   setParts: (parts) => set({ parts: Object.fromEntries(parts.map((p) => [p.partId, p])) }),
   setBuilding: (building, error = null) => set({ building, buildError: error }),
   setViewMode: (viewMode) => set({ viewMode }),
   setShowBox: (showBox) => set({ showBox }),
   setExplode: (explode) => set({ explode }),
+  setLevelView: (levelView) => set({ levelView }),
+  setGalleryOpen: (galleryOpen) => set({ galleryOpen }),
+  setInventoryOpen: (inventoryOpen) => set({ inventoryOpen }),
+  bumpFonts: () => set((s) => ({ fontsVersion: s.fontsVersion + 1 })),
 
   nudge: (id, dx, dy, stepMm = 1) =>
     set((s) => {
@@ -210,47 +235,32 @@ export const useStore = create<State>((set) => ({
       let pl = m.placement;
       if (pl.mode !== 'manual') {
         const inst = computeLayout(s.project).find((i) => i.moduleId === id && i.copyIndex === 0);
-        const x = inst?.x ?? 0;
-        const y = inst?.y ?? 0;
-        pl = {
-          ...pl,
-          x: round2(x),
-          y: round2(y),
-          gx: Math.max(0, Math.round((x - g.clearance) / g.cellX)),
-          gy: Math.max(0, Math.round((y - g.clearance) / g.cellY)),
-        };
+        pl = { ...pl, x: round2(inst?.x ?? 0), y: round2(inst?.y ?? 0) };
       }
-      const placement = g.enabled
-        ? { ...pl, mode: 'manual' as const, gx: Math.max(0, pl.gx + dx), gy: Math.max(0, pl.gy + dy) }
-        : { ...pl, mode: 'manual' as const, x: round2(pl.x + dx * stepMm), y: round2(pl.y + dy * stepMm) };
-      return { project: { ...s.project, modules: s.project.modules.map((x) => (x.id === id ? { ...x, placement } : x)) } };
+      const sx = g.enabled ? g.cellX : stepMm;
+      const sy = g.enabled ? g.cellY : stepMm;
+      const placement = { ...pl, mode: 'manual' as const, x: round2(Math.max(0, pl.x + dx * sx)), y: round2(Math.max(0, pl.y + dy * sy)) };
+      return mapModule(s, id, (x) => ({ ...x, placement }));
     }),
-  rotate: (id) =>
+  rotate: (id) => set((s) => mapModule(s, id, (x) => ({ ...x, placement: { ...x.placement, rotated: !x.placement.rotated } }))),
+  rotateAll: () =>
     set((s) => ({
-      project: {
-        ...s.project,
-        modules: s.project.modules.map((x) => (x.id === id ? { ...x, placement: { ...x.placement, rotated: !x.placement.rotated } } : x)),
-      },
+      project: { ...s.project, modules: s.project.modules.map((x) => ({ ...x, placement: { ...x.placement, mode: 'auto', rotated: !x.placement.rotated } })) },
     })),
-  shiftLayer: (id, dir) =>
+  shiftLevel: (id, dir) =>
     set((s) => {
       const m = s.project.modules.find((x) => x.id === id);
       if (!m) return {};
-      const idx = s.project.layers.findIndex((l) => l.id === m.layerId);
-      const target = s.project.layers[idx + dir];
-      if (!target) return {};
-      return {
-        project: { ...s.project, modules: s.project.modules.map((x) => (x.id === id ? { ...x, layerId: target.id } : x)) },
-        activeLayerId: target.id,
-      };
+      const level = Math.max(1, Math.min(maxLevel(s.project) + 1, m.level + dir));
+      return mapModule(s, id, (x) => ({ ...x, level }));
     }),
   selectNext: (dir) =>
     set((s) => {
       const mods = s.project.modules;
       if (mods.length === 0) return {};
       const i = mods.findIndex((m) => m.id === s.selectedId);
-      const next = mods[(i < 0 ? (dir > 0 ? 0 : mods.length - 1) : (i + dir + mods.length) % mods.length)];
-      return { selectedId: next.id, activeLayerId: next.layerId };
+      const next = mods[i < 0 ? (dir > 0 ? 0 : mods.length - 1) : (i + dir + mods.length) % mods.length];
+      return { selectedId: next.id, selectedCellId: null };
     }),
   undo: () =>
     set((s) => {
@@ -275,11 +285,7 @@ export const useStore = create<State>((set) => ({
 }));
 
 function keepSelection(p: Project, selectedId: string | null) {
-  const layerOk = (id: string) => p.layers.some((l) => l.id === id);
-  return {
-    selectedId: p.modules.some((m) => m.id === selectedId) ? selectedId : null,
-    activeLayerId: layerOk(useStore.getState().activeLayerId) ? useStore.getState().activeLayerId : p.layers[0].id,
-  };
+  return { selectedId: p.modules.some((m) => m.id === selectedId) ? selectedId : null };
 }
 
 // Verlauf aufzeichnen

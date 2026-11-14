@@ -3,48 +3,75 @@
  *
  * Werden von Geometrie-Aufbau, Layout, Validierung und UI gemeinsam genutzt,
  * damit alle Stellen garantiert mit denselben Zahlen rechnen.
+ *
+ * Die Funktionen hier bekommen die verfügbare Höhe (`avail`, vom Modulboden
+ * bis unter den Schachteldeckel) explizit übergeben; sie wird vom Stapel-Löser
+ * in `layout.ts` bestimmt.
  */
 import { effectiveCard } from './cards';
+import { bounds, gripCenters, gripRadius, pocketOutline, type Pt } from './shapes';
 import type {
   BoxSettings,
+  CardSpec,
   CardTrayModule,
+  CellLeaf,
+  CellNode,
   GridBoxModule,
   InsertModule,
-  Layer,
+  LidType,
   ModuleSize,
+  Pocket,
   Project,
+  ShapeBoxModule,
 } from './types';
 
 // ---------------------------------------------------------------------------
-// Konstanten für Verriegelung, Deckel und Zackenmuster
+// Konstanten
 
 /** Grundplatte: Plattenstärke unter den Modulen. */
 export const BASEPLATE_THICKNESS = 1.2;
-/** Verriegelungsrippe: Höhe, Fußbreite, Kopfbreite (45°-Flanken, stützfrei). */
-export const RIB_HEIGHT = 1.6;
-export const RIB_BASE = 3.6;
-export const RIB_TOP = 0.4;
+/** Fase an der Unterkante der Module, in die die Rippen der Grundplatte greifen. */
+export const LOCK_CHAMFER = 1.6;
 
-/** Steckdeckel: Plattenstärke, Tiefe und Wandstärke der Steck-Lippe. */
+/** Auflege- und Rastdeckel: Plattenstärke, Tiefe und Wandstärke der Steck-Lippe. */
 export const LID_PLATE = 1.6;
 export const LID_LIP_DEPTH = 4;
 export const LID_LIP_WALL = 1.2;
 /** Rastnase: Überstand und Höhe der Rastrippe. */
 export const SNAP_DEPTH = 0.5;
 export const SNAP_HEIGHT = 1.4;
+/** Schiebedeckel: Plattenstärke (= Nuttiefe) und Restwand hinter der Nut. */
+export const SLIDE_PLATE = 2;
+export const SLIDE_BACKING = 1.2;
+/** Klappdeckel: Radius der Scharnierknöchel, Bohrung für 1,75-mm-Filament als Stift. */
+export const HINGE_RADIUS = 2.6;
+export const HINGE_PIN_HOLE = 2.0;
+export const HINGE_PLATE = 2;
+/** Magnetdeckel: Material über/unter dem Magneten und Wand um die Tasche. */
+export const MAGNET_SKIN = 0.8;
+export const MAGNET_WALL = 1.2;
+export const MAGNET_PLAY = 0.2;
 
 /** Zackenmuster für rastende Trenner: Zahntiefe und Zahnbreite am Fuß. */
 export const TOOTH_DEPTH = 1.0;
 export const TOOTH_BASE = 1.6;
 
+/** Material hinter vertiefter Schrift. */
+export const LABEL_BACKING = 1.0;
+
 const EPS = 1e-6;
 
 // ---------------------------------------------------------------------------
-// Schachtel und Ebenen
+// Schachtel
 
 /** Nutzbare Höhe: Innenhöhe minus Kopfraum. */
 export function usableHeight(box: BoxSettings): number {
   return Math.max(0, box.innerHeight - box.headroom);
+}
+
+/** Unterkante der untersten Module (über der Grundplatte, falls vorhanden). */
+export function floorZ(p: Pick<Project, 'baseplate'>): number {
+  return p.baseplate.enabled ? BASEPLATE_THICKNESS : 0;
 }
 
 /** Außenmaße der Spielschachtel. */
@@ -56,41 +83,6 @@ export function outerBoxSize(box: BoxSettings): ModuleSize {
   };
 }
 
-export interface LayerInfo {
-  layer: Layer;
-  index: number;
-  /** Unterkante der Ebene. */
-  z: number;
-  height: number;
-  /** Unterkante der Module (über der Grundplatte, falls vorhanden). */
-  moduleZ: number;
-  /** Für Module verfügbare Höhe (Ebenenhöhe minus Grundplatte). */
-  available: number;
-  /** Module haben Verriegelungsnuten im Boden. */
-  interlock: boolean;
-}
-
-export function layerInfos(p: Pick<Project, 'box' | 'layers' | 'grid'>): LayerInfo[] {
-  const usable = usableHeight(p.box);
-  const fixed = p.layers.filter((l) => l.heightMode === 'fixed').reduce((s, l) => s + l.height, 0);
-  const autoCount = p.layers.filter((l) => l.heightMode === 'auto').length;
-  const autoHeight = autoCount > 0 ? Math.max(0, usable - fixed) / autoCount : 0;
-  let z = 0;
-  return p.layers.map((layer, index) => {
-    const height = layer.heightMode === 'fixed' ? layer.height : autoHeight;
-    const interlock = index === 0 && p.grid.enabled && p.grid.baseplate;
-    const plate = interlock ? BASEPLATE_THICKNESS : 0;
-    const info = { layer, index, z, height, moduleZ: z + plate, available: Math.max(0, height - plate), interlock };
-    z += height;
-    return info;
-  });
-}
-
-export function layerInfoFor(p: Pick<Project, 'box' | 'layers' | 'grid'>, layerId: string): LayerInfo {
-  const infos = layerInfos(p);
-  return infos.find((l) => l.layer.id === layerId) ?? infos[0];
-}
-
 // ---------------------------------------------------------------------------
 // Innenraster
 
@@ -100,30 +92,33 @@ export interface GridInfo {
   ny: number;
   cellX: number;
   cellY: number;
+  /** Position der ersten Rasterlinie. */
+  x0: number;
+  y0: number;
   clearance: number;
 }
 
 export function gridInfo(p: Pick<Project, 'box' | 'grid' | 'print'>): GridInfo {
   const c = p.print.clearance;
-  const target = Math.max(5, p.grid.targetCell);
-  const nx = Math.max(1, Math.round((p.box.innerWidth - c) / target));
-  const ny = Math.max(1, Math.round((p.box.innerDepth - c) / target));
-  return {
-    enabled: p.grid.enabled,
-    nx,
-    ny,
-    cellX: (p.box.innerWidth - c) / nx,
-    cellY: (p.box.innerDepth - c) / ny,
-    clearance: c,
-  };
+  const pitch = Math.max(2, p.grid.pitch);
+  const aw = p.box.innerWidth - c;
+  const ad = p.box.innerDepth - c;
+  if (p.grid.fit === 'exact') {
+    const nx = Math.max(1, Math.floor(aw / pitch + EPS));
+    const ny = Math.max(1, Math.floor(ad / pitch + EPS));
+    return { enabled: p.grid.enabled, nx, ny, cellX: pitch, cellY: pitch, x0: c / 2 + (aw - nx * pitch) / 2, y0: c / 2 + (ad - ny * pitch) / 2, clearance: c };
+  }
+  const nx = Math.max(1, Math.round(aw / pitch));
+  const ny = Math.max(1, Math.round(ad / pitch));
+  return { enabled: p.grid.enabled, nx, ny, cellX: aw / nx, cellY: ad / ny, x0: c / 2, y0: c / 2, clearance: c };
 }
 
 /** Position der Rasterlinie i in X bzw. Y. */
 export function gridLineX(g: GridInfo, i: number): number {
-  return g.clearance / 2 + i * g.cellX;
+  return g.x0 + i * g.cellX;
 }
 export function gridLineY(g: GridInfo, i: number): number {
-  return g.clearance / 2 + i * g.cellY;
+  return g.y0 + i * g.cellY;
 }
 
 /** Benötigte Zellen für eine Länge. */
@@ -136,31 +131,115 @@ export function cellSpan(n: number, cell: number, clearance: number): number {
   return n * cell - clearance;
 }
 
+/** Zellgrößen in Modulrichtung (bei gedrehtem Modul vertauscht). */
+export function moduleCellSize(m: InsertModule, g: GridInfo): { cx: number; cy: number } {
+  return m.placement.rotated ? { cx: g.cellY, cy: g.cellX } : { cx: g.cellX, cy: g.cellY };
+}
+
+/** Rundet natürliche Außenmaße auf das Raster auf. */
+export function snapSize(m: InsertModule, p: Project, w: number, d: number): { width: number; depth: number } {
+  const g = gridInfo(p);
+  if (!g.enabled) return { width: w, depth: d };
+  const { cx, cy } = moduleCellSize(m, g);
+  return { width: cellSpan(cellsFor(w, cx, g.clearance), cx, g.clearance), depth: cellSpan(cellsFor(d, cy, g.clearance), cy, g.clearance) };
+}
+
 // ---------------------------------------------------------------------------
-// Gemeinsame Modul-Infos
+// Wände, Deckel, Beschriftung
 
-export interface ModuleContext {
-  layer: LayerInfo;
-  grid: GridInfo;
-  /** Effektive Bodenstärke (inkl. Nutenhöhe bei Verriegelung). */
-  floor: number;
-  /** Höhe der Verriegelungsnuten im Boden (0 ohne Verriegelung). */
-  grooveHeight: number;
+export interface Walls {
+  front: number;
+  back: number;
+  left: number;
+  right: number;
 }
 
-export function moduleContext(m: InsertModule, p: Project): ModuleContext {
-  const layer = layerInfoFor(p, m.layerId);
-  const grooveHeight = layer.interlock ? RIB_HEIGHT + p.print.clearance : 0;
-  return { layer, grid: gridInfo(p), floor: p.print.floorThickness + grooveHeight, grooveHeight };
+/** Welche Seiten tragen eine Beschriftung? */
+export function labelSides(m: InsertModule): { front: boolean; back: boolean; left: boolean; right: boolean } {
+  const s = m.label.sides;
+  const tilted = m.type === 'cardTray' && m.orientation === 'standing' && m.tilt > 0;
+  return {
+    front: (s === 'frontBack' || s === 'front') && !tilted,
+    back: s === 'frontBack' && !tilted,
+    left: s === 'leftRight',
+    right: s === 'leftRight',
+  };
 }
 
-export function lidThickness(m: InsertModule): number {
-  return m.type === 'gridBox' && m.lid === 'snap' ? LID_PLATE : 0;
+/** Wandstärken eines Moduls (beschriftete Wände werden verstärkt). */
+export function baseWalls(m: InsertModule, p: Project): Walls {
+  const w = p.print.wallThickness;
+  const t = Math.max(w, p.labels.depth + LABEL_BACKING);
+  const s = labelSides(m);
+  if (m.type === 'shapeBox') return { front: w, back: w, left: w, right: w };
+  return { front: s.front ? t : w, back: s.back ? t : w, left: s.left ? t : w, right: s.right ? t : w };
 }
 
-/** Höhe für `layer`/`custom` (Gesamthöhe inkl. Deckel). */
-function totalHeightFor(m: InsertModule, ctx: ModuleContext): number {
-  return m.heightMode === 'custom' ? m.customHeight : ctx.layer.available;
+export interface LidInfo {
+  type: LidType;
+  /** Stärke der Deckelplatte (0 ohne Deckel). */
+  plate: number;
+  /** Freiraum, den der Deckel innen oben braucht (Lippe). */
+  innerReserve: number;
+}
+
+/** Unterstützt das Modul einen Deckel? */
+export function lidAllowed(m: InsertModule): boolean {
+  if (m.type !== 'cardTray') return true;
+  return !(m.orientation === 'standing' && m.tilt > 0);
+}
+
+export function lidInfo(m: InsertModule, p: Project): LidInfo {
+  const type: LidType = lidAllowed(m) ? m.lid : 'none';
+  const text = m.label.onLid ? p.labels.depth + 0.8 : 0;
+  const c = p.print.clearance;
+  switch (type) {
+    case 'none':
+      return { type, plate: 0, innerReserve: 0 };
+    case 'lift':
+    case 'snap':
+      return { type, plate: Math.max(LID_PLATE, text), innerReserve: LID_LIP_DEPTH + c + 0.5 };
+    case 'slide':
+      return { type, plate: Math.max(SLIDE_PLATE, text), innerReserve: 0.5 };
+    case 'magnet':
+      return { type, plate: Math.max(m.magnetHeight + MAGNET_PLAY + MAGNET_SKIN, text), innerReserve: 0.5 };
+    case 'hinge':
+      return { type, plate: Math.max(HINGE_PLATE, text), innerReserve: 0.5 };
+  }
+}
+
+/** Kantenlänge der Magnet-Eckpfeiler. */
+export function magnetPostSize(m: InsertModule): number {
+  return m.magnetDiameter + MAGNET_PLAY + 2 * MAGNET_WALL;
+}
+
+/** Höhe aus Höhenmodus (Gesamthöhe inkl. Deckel). */
+function totalHeight(m: InsertModule, natural: number, avail: number): number {
+  if (m.heightMode === 'custom') return m.customHeight;
+  if (m.heightMode === 'fill') return avail;
+  return natural;
+}
+
+/** Bodenfase (Verriegelung mit der Grundplatte oder gegen Elefantenfuß). */
+export function bottomChamfer(p: Project): number {
+  return p.baseplate.enabled ? LOCK_CHAMFER : Math.max(0, p.print.bottomChamfer);
+}
+
+// ---------------------------------------------------------------------------
+// Karten
+
+export interface CardFace {
+  /** Maße in Einbaulage (inkl. Hülle). */
+  faceW: number;
+  faceH: number;
+  thickness: number;
+}
+
+export function cardFace(spec: CardSpec, format: 'portrait' | 'landscape'): CardFace {
+  const card = effectiveCard(spec);
+  return format === 'portrait'
+    ? { faceW: card.width, faceH: card.height, thickness: card.thickness }
+    : { faceW: card.height, faceH: card.width, thickness: card.thickness };
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +248,19 @@ function totalHeightFor(m: InsertModule, ctx: ModuleContext): number {
 export interface CardTrayLayout {
   width: number;
   depth: number;
+  /** Höhe des Unterteils (ohne Deckel). */
   height: number;
+  /** Gesamthöhe inkl. Deckel. */
+  total: number;
   floor: number;
+  walls: Walls;
+  lid: LidInfo;
   orientation: 'standing' | 'flat';
   rows: number;
   /** X-Start der Kavität jeder Reihe. */
   rowX: number[];
+  /** Y-Start der Kavität (vorne). */
+  cavityY: number;
   /** Innenbreite einer Reihe (zwischen den Wandflächen). */
   rowInnerX: number;
   /** Kartenmaße in der Einbaulage (inkl. Hülle). */
@@ -200,21 +286,24 @@ export interface CardTrayLayout {
   slotInnerY: number;
   /** Vom Kartenstapel benötigte Höhe über dem Fachboden (inkl. Lasche). */
   requiredInnerHeight: number;
-  /** Höhe der Kavität (Außenhöhe minus Boden). */
+  /** Höhe der Kavität (Unterteil minus Boden). */
   cavityHeight: number;
 }
 
-export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
-  const ctx = moduleContext(m, p);
+/** Anzahl separater Trenner (bei beschrifteten Trennern = Anzahl Einträge). */
+export function dividerTotal(m: CardTrayModule): number {
+  const labels = m.dividerLabels.filter((s) => s.trim() !== '');
+  return labels.length > 0 ? labels.length : m.dividerCount;
+}
+
+export function cardTrayDims(m: CardTrayModule, p: Project, avail: number): CardTrayLayout {
   const c = p.print.clearance;
-  const card = effectiveCard(m);
-  const wall = p.print.wallThickness;
+  const face = cardFace(m, m.format);
   const div = p.print.dividerThickness;
-  const floor = ctx.floor;
+  const floor = p.print.floorThickness;
+  const lid = lidInfo(m, p);
+  const walls0 = baseWalls(m, p);
   const rows = m.rows >= 2 ? 2 : 1;
-  const portrait = m.format === 'portrait';
-  const cardFaceW = portrait ? card.width : card.height;
-  const cardFaceH = portrait ? card.height : card.width;
   const variable = m.orientation === 'standing' && m.dividerMode !== 'fixed';
   const toothed = m.orientation === 'standing' && m.dividerMode === 'toothed';
   const tilt = m.orientation === 'standing' ? (Math.min(45, Math.max(0, m.tilt)) * Math.PI) / 180 : 0;
@@ -225,21 +314,15 @@ export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
   // Nutbreite horizontal gemessen; bei Neigung breiter, damit die Trenner senkrecht zur Platte passen.
   const toothPitch = (m.dividerPlateThickness + 2 * c + 0.2) / Math.cos(tilt) + TOOTH_BASE;
 
+  const dividers = variable ? dividerTotal(m) : 0;
   const rowCards = Math.ceil(Math.max(0, m.totalCards) / rows);
-  const rowDividers = Math.ceil(Math.max(0, m.dividerCount) / rows);
+  const rowDividers = Math.ceil(dividers / rows);
   const tabH = variable && m.tab ? m.tabHeight : 0;
 
-  // Benötigte Höhe der Kavität
-  const requiredInnerHeight =
-    m.orientation === 'standing' ? (cardFaceH + tabH) * cos : m.cardsPerSlot * card.thickness;
-
-  // Höhe
-  let total =
-    m.heightMode === 'auto'
-      ? floor + requiredInnerHeight + (m.orientation === 'standing' ? 1 : 1.5)
-      : totalHeightFor(m, ctx);
-  if (m.heightMode === 'auto') total = Math.min(total, Math.max(ctx.layer.available, floor + 2));
-  const height = total;
+  const requiredInnerHeight = m.orientation === 'standing' ? (face.faceH + tabH) * cos : m.cardsPerSlot * face.thickness;
+  const natural = floor + requiredInnerHeight + (m.orientation === 'standing' ? 1 : 1.5) + lid.innerReserve + lid.plate;
+  const total = totalHeight(m, natural, avail);
+  const height = Math.max(floor + 1, total - lid.plate);
   const cavityHeight = Math.max(0, height - floor);
 
   let naturalW: number;
@@ -251,38 +334,36 @@ export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
   let slotInnerY = 0;
 
   if (m.orientation === 'standing') {
-    rowInnerX = cardFaceW + m.play + 2 * toothDepth;
-    naturalW = rows * rowInnerX + (rows - 1) * div + 2 * wall;
+    rowInnerX = face.faceW + m.play + 2 * toothDepth;
+    naturalW = rows * rowInnerX + (rows - 1) * div + walls0.left + walls0.right;
     if (variable) {
-      const stack = rowCards * card.thickness + rowDividers * (m.dividerPlateThickness + 0.3);
+      const stack = rowCards * face.thickness + rowDividers * (m.dividerPlateThickness + 0.3);
       cavityLength = (stack + m.play) / cos;
     } else {
-      slotLength = (m.cardsPerSlot * card.thickness + m.play) / cos;
+      slotLength = (m.cardsPerSlot * face.thickness + m.play) / cos;
       cavityLength = slots * slotLength + ((slots - 1) * div) / cos;
     }
-    naturalD = 2 * wall + cavityLength + cavityHeight * tan;
+    naturalD = walls0.front + walls0.back + cavityLength + cavityHeight * tan;
   } else {
-    slotInnerX = cardFaceW + m.play;
-    slotInnerY = cardFaceH + m.play;
+    slotInnerX = face.faceW + m.play;
+    slotInnerY = face.faceH + m.play;
     rowInnerX = slots * slotInnerX + (slots - 1) * div;
-    naturalW = rowInnerX + 2 * wall;
-    naturalD = rows * slotInnerY + (rows - 1) * div + 2 * wall;
+    naturalW = rowInnerX + walls0.left + walls0.right;
+    naturalD = rows * slotInnerY + (rows - 1) * div + walls0.front + walls0.back;
   }
 
-  // Auf Innenraster aufrunden
-  let width = naturalW;
-  let depth = naturalD;
-  if (ctx.grid.enabled) {
-    const cx = m.placement.rotated ? ctx.grid.cellY : ctx.grid.cellX;
-    const cy = m.placement.rotated ? ctx.grid.cellX : ctx.grid.cellY;
-    width = cellSpan(cellsFor(naturalW, cx, c), cx, c);
-    depth = cellSpan(cellsFor(naturalD, cy, c), cy, c);
-  }
+  const { width, depth } = snapSize(m, p, naturalW, naturalD);
   const extraX = width - naturalW;
   const extraY = depth - naturalD;
-
-  // Zusätzlicher Platz in Y geht in die Kavität, in X in die Außenwände.
-  if (m.orientation === 'standing') {
+  const walls = { ...walls0 };
+  // Zusätzlicher Platz: in X immer in die Seitenwände (Karten brauchen nicht mehr
+  // Breite), in Y je nach Einstellung in die Kavität oder in Vorder-/Rückwand.
+  walls.left += extraX / 2;
+  walls.right += extraX / 2;
+  if (p.grid.grow === 'wall') {
+    walls.front += extraY / 2;
+    walls.back += extraY / 2;
+  } else if (m.orientation === 'standing') {
     if (variable) cavityLength += extraY;
     else {
       slotLength += extraY / slots;
@@ -291,20 +372,23 @@ export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
   } else {
     slotInnerY += extraY / rows;
   }
-  const xStart = wall + extraX / 2;
-  const rowX = Array.from({ length: m.orientation === 'standing' ? rows : 1 }, (_, i) => xStart + i * (rowInnerX + div));
+  const rowX = Array.from({ length: m.orientation === 'standing' ? rows : 1 }, (_, i) => walls.left + i * (rowInnerX + div));
 
   return {
     width,
     depth,
     height,
+    total: height + lid.plate,
     floor,
+    walls,
+    lid,
     orientation: m.orientation,
     rows,
     rowX,
+    cavityY: walls.front,
     rowInnerX,
-    cardFaceW,
-    cardFaceH,
+    cardFaceW: face.faceW,
+    cardFaceH: face.faceH,
     tilt,
     cavityLength,
     slots,
@@ -312,7 +396,7 @@ export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
     rowCards,
     rowDividers,
     dividerWidth: rowInnerX - 2 * c,
-    dividerBodyHeight: cardFaceH,
+    dividerBodyHeight: face.faceH,
     toothDepth,
     toothPitch,
     slotInnerX,
@@ -323,15 +407,22 @@ export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
 }
 
 // ---------------------------------------------------------------------------
-// Rasterbox
+// Fächerbox (Aufteilungsbaum)
 
-export interface GridCell {
-  row: number;
-  col: number;
+export interface CellRect {
+  id: string;
+  leaf: CellLeaf;
   x: number;
   y: number;
   w: number;
   d: number;
+  /** Bodenhöhe des Fachs (bei liegenden Karten angehoben). */
+  floor: number;
+  /** Fach grenzt an die Außenwand. */
+  front: boolean;
+  back: boolean;
+  left: boolean;
+  right: boolean;
 }
 
 export interface GridBoxLayout {
@@ -339,84 +430,259 @@ export interface GridBoxLayout {
   depth: number;
   /** Höhe des Unterteils (ohne Deckel). */
   height: number;
+  total: number;
   floor: number;
-  cells: GridCell[];
-  /** Tatsächliche Absenkung der Trennwände (Deckel-Lippe berücksichtigt). */
+  walls: Walls;
+  lid: LidInfo;
+  cells: CellRect[];
+  /** Absenkung der Trennwände. */
   dividerLowering: number;
-  lid: boolean;
+  /** Innenmaß, das der Inhalt mindestens braucht. */
+  requiredInner: { w: number; d: number };
 }
 
-export function normalizedRows(m: GridBoxModule): { size: number; columns: number[] }[] {
-  const rows = m.layout.filter((r) => r.size > 0 && r.columns.length > 0);
-  if (rows.length === 0) return [{ size: 1, columns: [1] }];
-  return rows.map((r) => ({ size: r.size, columns: r.columns.filter((c) => c > 0).length ? r.columns.filter((c) => c > 0) : [1] }));
-}
-
-export function gridBoxLayout(m: GridBoxModule, p: Project): GridBoxLayout {
-  const ctx = moduleContext(m, p);
-  const c = p.print.clearance;
-  const wall = p.print.wallThickness;
-  const div = p.print.dividerThickness;
-  let width = m.width;
-  let depth = m.depth;
-  if (ctx.grid.enabled) {
-    const cx = m.placement.rotated ? ctx.grid.cellY : ctx.grid.cellX;
-    const cy = m.placement.rotated ? ctx.grid.cellX : ctx.grid.cellY;
-    width = cellSpan(Math.max(1, Math.round(m.widthCells)), cx, c);
-    depth = cellSpan(Math.max(1, Math.round(m.depthCells)), cy, c);
+/** Platzbedarf eines Fachs (Innenmaße und Höhe über dem Fachboden). */
+export function leafRequirement(leaf: CellLeaf): { w: number; d: number; h: number } {
+  const ct = leaf.content;
+  if (ct.type === 'cards') {
+    const f = cardFace(ct, ct.format);
+    if (ct.orientation === 'flat') return { w: f.faceW + 1, d: f.faceH + 1, h: ct.count * f.thickness };
+    return { w: f.faceW + 1, d: ct.count * f.thickness + 1, h: f.faceH };
   }
-  const lid = m.lid === 'snap';
-  const height = totalHeightFor(m, ctx) - lidThickness(m);
+  if (ct.type === 'scoop') return { w: 15, d: 15, h: 0 };
+  return { w: 8, d: 8, h: 0 };
+}
 
-  const rows = normalizedRows(m);
-  const innerX = width - 2 * wall;
-  const innerY = depth - 2 * wall;
-  const rowSum = rows.reduce((s, r) => s + r.size, 0);
-  const rowSpace = innerY - (rows.length - 1) * div;
-  const cells: GridCell[] = [];
-  let y = wall;
-  rows.forEach((r, ri) => {
-    const d = (rowSpace * r.size) / rowSum;
-    const colSum = r.columns.reduce((s, v) => s + v, 0);
-    const colSpace = innerX - (r.columns.length - 1) * div;
-    let x = wall;
-    r.columns.forEach((cw, ci) => {
-      const w = (colSpace * cw) / colSum;
-      cells.push({ row: ri, col: ci, x, y, w, d });
-      x += w + div;
-    });
-    y += d + div;
+function nodeRequirement(n: CellNode, div: number): { w: number; d: number } {
+  if (n.kind === 'leaf') {
+    const r = leafRequirement(n);
+    return { w: r.w, d: r.d };
+  }
+  const kids = n.children.map((ch) => {
+    const r = nodeRequirement(ch, div);
+    if (ch.unit === 'mm') return n.dir === 'x' ? { ...r, w: ch.size } : { ...r, d: ch.size };
+    return r;
+  });
+  const gaps = Math.max(0, kids.length - 1) * div;
+  return n.dir === 'x'
+    ? { w: kids.reduce((s, k) => s + k.w, 0) + gaps, d: Math.max(0, ...kids.map((k) => k.d)) }
+    : { w: Math.max(0, ...kids.map((k) => k.w)), d: kids.reduce((s, k) => s + k.d, 0) + gaps };
+}
+
+/** Teilt eine Länge auf die Kinder einer Teilung auf. */
+export function distribute(n: Extract<CellNode, { kind: 'split' }>, length: number, div: number): number[] {
+  const kids = n.children;
+  const req = kids.map((k) => {
+    const r = nodeRequirement(k, div);
+    return n.dir === 'x' ? r.w : r.d;
+  });
+  const space = length - Math.max(0, kids.length - 1) * div;
+  const fixed = kids.map((k, i) => (k.unit === 'mm' ? k.size : k.unit === 'auto' ? req[i] : 0));
+  const frSum = kids.reduce((s, k) => s + (k.unit === 'fr' ? Math.max(0.01, k.size) : 0), 0);
+  const rest = space - fixed.reduce((s, v) => s + v, 0);
+  if (rest < 0) {
+    // Passt nicht: proportional stauchen (Validierung meldet zu kleine Fächer).
+    const total = fixed.reduce((s, v) => s + v, 0) || 1;
+    return fixed.map((v) => (v / total) * Math.max(0, space));
+  }
+  if (frSum > 0) return kids.map((k, i) => (k.unit === 'fr' ? (rest * Math.max(0.01, k.size)) / frSum : fixed[i]));
+  // Keine Anteils-Fächer: Rest gleichmäßig auf die automatischen verteilen
+  const autos = kids.filter((k) => k.unit === 'auto').length;
+  return kids.map((k, i) => fixed[i] + (autos > 0 ? (k.unit === 'auto' ? rest / autos : 0) : rest / kids.length));
+}
+
+function layoutTree(n: CellNode, x: number, y: number, w: number, d: number, div: number, out: Omit<CellRect, 'floor' | 'front' | 'back' | 'left' | 'right'>[]) {
+  if (n.kind === 'leaf') {
+    out.push({ id: n.id, leaf: n, x, y, w, d });
+    return;
+  }
+  const sizes = distribute(n, n.dir === 'x' ? w : d, div);
+  let pos = n.dir === 'x' ? x : y;
+  n.children.forEach((ch, i) => {
+    if (n.dir === 'x') layoutTree(ch, pos, y, sizes[i], d, div, out);
+    else layoutTree(ch, x, pos, w, sizes[i], div, out);
+    pos += sizes[i] + div;
+  });
+}
+
+/** Alle Blätter des Baums in Reihenfolge. */
+export function treeLeaves(n: CellNode): CellLeaf[] {
+  return n.kind === 'leaf' ? [n] : n.children.flatMap(treeLeaves);
+}
+
+export function gridBoxDims(m: GridBoxModule, p: Project, avail: number): GridBoxLayout {
+  const div = p.print.dividerThickness;
+  const floor = p.print.floorThickness;
+  const lid = lidInfo(m, p);
+  const walls = baseWalls(m, p);
+  const req = nodeRequirement(m.root, div);
+  const naturalW = m.sizeMode === 'auto' ? req.w + walls.left + walls.right : m.width;
+  const naturalD = m.sizeMode === 'auto' ? req.d + walls.front + walls.back : m.depth;
+  const { width, depth } = snapSize(m, p, naturalW, naturalD);
+  const extraX = width - naturalW;
+  const extraY = depth - naturalD;
+  if (p.grid.grow === 'wall') {
+    walls.left += extraX / 2;
+    walls.right += extraX / 2;
+    walls.front += extraY / 2;
+    walls.back += extraY / 2;
+  }
+
+  // Höhe aus dem Inhalt: höchster Platzbedarf eines Fachs
+  const leaves = treeLeaves(m.root);
+  const contentH = Math.max(0, ...leaves.map((l) => leafRequirement(l).h + (l.content.type === 'cards' ? 1 : 0)));
+  const naturalTotal = floor + Math.max(contentH, 20) + lid.innerReserve + lid.plate;
+  const total = totalHeight(m, naturalTotal, avail);
+  const height = Math.max(floor + 1, total - lid.plate);
+
+  const innerW = width - walls.left - walls.right;
+  const innerD = depth - walls.front - walls.back;
+  const raw: Omit<CellRect, 'floor' | 'front' | 'back' | 'left' | 'right'>[] = [];
+  layoutTree(m.root, walls.left, walls.front, innerW, innerD, div, raw);
+  const e = 0.01;
+  const top = height - lid.innerReserve;
+  const cells: CellRect[] = raw.map((r) => {
+    let f = floor;
+    const ct = r.leaf.content;
+    if (ct.type === 'cards' && ct.orientation === 'flat' && ct.raise) {
+      const stack = leafRequirement(r.leaf).h;
+      f = Math.max(floor, top - stack - 1);
+    }
+    return {
+      ...r,
+      floor: f,
+      front: r.y <= walls.front + e,
+      back: r.y + r.d >= depth - walls.back - e,
+      left: r.x <= walls.left + e,
+      right: r.x + r.w >= width - walls.right - e,
+    };
   });
 
-  const lipNeed = lid ? LID_LIP_DEPTH + c : 0;
   return {
     width,
     depth,
     height,
-    floor: ctx.floor,
-    cells,
-    dividerLowering: Math.max(m.dividerLowering, lipNeed),
+    total: height + lid.plate,
+    floor,
+    walls,
     lid,
+    cells,
+    dividerLowering: Math.max(0, m.dividerLowering),
+    requiredInner: { w: req.w, d: req.d },
   };
 }
 
 // ---------------------------------------------------------------------------
+// Aufleger-Box
 
-/** Außenmaße eines Moduls (unrotiert). `height` enthält einen Deckel. */
-export function moduleSize(m: InsertModule, p: Project): ModuleSize {
-  if (m.type === 'cardTray') {
-    const l = cardTrayLayout(m, p);
-    return { width: l.width, depth: l.depth, height: l.height };
-  }
-  const l = gridBoxLayout(m, p);
-  return { width: l.width, depth: l.depth, height: l.height + lidThickness(m) };
+export interface PocketLayout {
+  pocket: Pocket;
+  /** Umriss in Box-Koordinaten (ohne Spiel). */
+  outline: Pt[];
+  /** Taschentiefe ab Oberkante. */
+  depth: number;
+  /** Boden der Tasche. */
+  floorZ: number;
+  grips: Pt[];
+  gripR: number;
 }
 
-/** Belegte Rasterzellen (unrotiert X × Y). */
-export function moduleCells(m: InsertModule, p: Project): { nx: number; ny: number } {
-  const g = gridInfo(p);
-  const s = moduleSize(m, p);
-  const cx = m.placement.rotated ? g.cellY : g.cellX;
-  const cy = m.placement.rotated ? g.cellX : g.cellY;
-  return { nx: cellsFor(s.width, cx, g.clearance), ny: cellsFor(s.depth, cy, g.clearance) };
+export interface ShapeBoxLayout {
+  width: number;
+  depth: number;
+  height: number;
+  total: number;
+  floor: number;
+  lid: LidInfo;
+  /** Verschiebung der Taschenkoordinaten (bei automatischer Größe). */
+  dx: number;
+  dy: number;
+  play: number;
+  pockets: PocketLayout[];
+}
+
+/** Rand um die Taschen bei automatischer Boxgröße. */
+export function shapeMargin(p: Project): number {
+  return Math.max(2, p.print.wallThickness + 0.4);
+}
+
+export function pocketDepth(pk: Pocket): number {
+  return Math.max(0.6, pk.count * pk.thickness + 0.4);
+}
+
+/** Begrenzungsrechteck aller Taschen inkl. Spiel und Griffmulden (Taschenkoordinaten). */
+export function pocketsBounds(pockets: Pocket[], play: number) {
+  let b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const pk of pockets) {
+    const o = pocketOutline(pk);
+    const ob = bounds(o);
+    b = { x0: Math.min(b.x0, ob.x0 - play), y0: Math.min(b.y0, ob.y0 - play), x1: Math.max(b.x1, ob.x1 + play), y1: Math.max(b.y1, ob.y1 + play) };
+    const r = gripRadius(pk);
+    for (const [gx, gy] of gripCenters(pk, o, play))
+      b = { x0: Math.min(b.x0, gx - r), y0: Math.min(b.y0, gy - r), x1: Math.max(b.x1, gx + r), y1: Math.max(b.y1, gy + r) };
+  }
+  return b;
+}
+
+export function shapeBoxDims(m: ShapeBoxModule, p: Project, avail: number): ShapeBoxLayout {
+  const floor = p.print.floorThickness;
+  const lid = lidInfo(m, p);
+  const play = p.print.clearance + Math.max(0, m.pocketPlay);
+  const margin = shapeMargin(p);
+  const b = m.pockets.length ? pocketsBounds(m.pockets, play) : { x0: 0, y0: 0, x1: 40, y1: 40 };
+  const sideText = labelSides(m);
+  const textPad = p.labels.depth + LABEL_BACKING;
+  const mx0 = Math.max(margin, sideText.left ? textPad + 0.8 : 0);
+  const mx1 = Math.max(margin, sideText.right ? textPad + 0.8 : 0);
+  const my0 = Math.max(margin, sideText.front ? textPad + 0.8 : 0);
+  const my1 = Math.max(margin, sideText.back ? textPad + 0.8 : 0);
+  const lipPad =
+    lid.type === 'lift' || lid.type === 'snap'
+      ? LID_LIP_WALL + 2 * p.print.clearance + 0.6
+      : lid.type === 'slide'
+        ? Math.max(0, lid.plate + SLIDE_BACKING + 0.8 - margin)
+        : lid.type === 'magnet'
+          ? magnetPostSize(m) + 0.6 - margin
+          : lid.type === 'hinge'
+            ? Math.max(0, 2 * HINGE_RADIUS + 0.8 - margin)
+            : 0;
+  const naturalW = m.sizeMode === 'auto' ? b.x1 - b.x0 + mx0 + mx1 + 2 * lipPad : m.width;
+  const naturalD = m.sizeMode === 'auto' ? b.y1 - b.y0 + my0 + my1 + 2 * lipPad : m.depth;
+  const { width, depth } = snapSize(m, p, naturalW, naturalD);
+  let dx = 0;
+  let dy = 0;
+  if (m.sizeMode === 'auto') {
+    dx = mx0 + lipPad - b.x0 + (width - naturalW) / 2;
+    dy = my0 + lipPad - b.y0 + (depth - naturalD) / 2;
+  } else {
+    dx = (width - naturalW) / 2;
+    dy = (depth - naturalD) / 2;
+  }
+  const maxDepth = Math.max(1, ...m.pockets.map(pocketDepth));
+  const natural = floor + maxDepth + lid.plate;
+  const total = totalHeight(m, natural, avail);
+  const height = Math.max(floor + 0.6, total - lid.plate);
+  const pockets: PocketLayout[] = m.pockets.map((pk) => {
+    const outline = pocketOutline(pk, dx, dy);
+    const shifted = { ...pk, x: pk.x + dx, y: pk.y + dy };
+    const depthP = Math.min(pocketDepth(pk), height - 0.6);
+    return { pocket: pk, outline, depth: depthP, floorZ: height - depthP, grips: gripCenters(shifted, outline, play), gripR: gripRadius(pk) };
+  });
+  return { width, depth, height, total: height + lid.plate, floor, lid, dx, dy, play, pockets };
+}
+
+// ---------------------------------------------------------------------------
+
+/** Außenmaße eines Moduls (unrotiert, inkl. Deckel) bei gegebener verfügbarer Höhe. */
+export function moduleSizeWith(m: InsertModule, p: Project, avail: number): ModuleSize {
+  if (m.type === 'cardTray') {
+    const l = cardTrayDims(m, p, avail);
+    return { width: l.width, depth: l.depth, height: l.total };
+  }
+  if (m.type === 'gridBox') {
+    const l = gridBoxDims(m, p, avail);
+    return { width: l.width, depth: l.depth, height: l.total };
+  }
+  const l = shapeBoxDims(m, p, avail);
+  return { width: l.width, depth: l.depth, height: l.total };
 }

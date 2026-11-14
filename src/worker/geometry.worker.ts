@@ -11,8 +11,12 @@ import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { zipSync } from 'fflate';
 import { buildPart, type PartResult } from '../geometry/build';
 import { initKernel } from '../geometry/kernel';
-import { listParts } from '../geometry/parts';
+import { assemblyHtml, assemblySvg } from '../geometry/assembly';
+import { usableHeight } from '../geometry/dimensions';
+import { computeLayout, moduleAvail } from '../geometry/layout';
+import { groundInstances, labelText, listParts } from '../geometry/parts';
 import { fileNameFor, serializeProject, uniqueFileNames } from '../geometry/project';
+import { loadAllFonts } from '../geometry/text';
 import { checkWatertight, parseBinaryStl, writeBinaryStl } from '../geometry/stl';
 import type { PartSpec, Project } from '../geometry/types';
 import type { ExportedFile, PartPreview, WorkerRequest, WorkerResponse } from './protocol';
@@ -27,16 +31,20 @@ const cache = new Map<string, CacheEntry>();
 const MAX_CACHE = 96;
 
 function cacheKey(spec: PartSpec, p: Project): string {
-  const { name: _n, quantity: _q, ...specGeom } = spec;
+  const { name: _n, quantity: _q, note: _note, ...specGeom } = spec;
   const m = p.modules.find((x) => x.id === spec.moduleId);
   let mod: unknown = null;
   if (m) {
-    const { name: _mn, quantity: _mq, id: _id, placement, ...rest } = m;
-    mod = { ...rest, rotated: placement.rotated };
+    const { name: _mn, quantity: _mq, id: _id, placement, level: _lv, ...rest } = m;
+    // Höhe „bis Deckel“ hängt von der Lage ab; der Name ist ggf. die Beschriftung.
+    mod = { ...rest, rotated: placement.rotated, avail: m.heightMode === 'fill' ? moduleAvail(m, p) : 0, text: labelText(m) };
   }
-  const layers = p.layers.map((l) => [l.id, l.heightMode, l.height]);
-  return JSON.stringify([specGeom.kind, specGeom.variant, specGeom.tile, mod, p.print, p.box, p.grid, layers]);
+  const ground = spec.kind === 'baseplate' ? groundInstances(p).map((i) => [i.x, i.y, i.width, i.depth]) : null;
+  const { printer: _pr, ...print } = p.print;
+  return JSON.stringify([specGeom, mod, print, p.box, p.grid, p.baseplate, p.labels, ground]);
 }
+
+let fontsReady: Promise<void> | null = null;
 
 async function getPart(spec: PartSpec, p: Project): Promise<CacheEntry> {
   const key = cacheKey(spec, p);
@@ -47,6 +55,7 @@ async function getPart(spec: PartSpec, p: Project): Promise<CacheEntry> {
     return hit;
   }
   const k = await initKernel(wasmUrl);
+  await (fontsReady ??= loadAllFonts());
   const part = buildPart(k, spec, p);
   const stl = writeBinaryStl(part.mesh, `BG-Insert-Konfigurator: ${spec.name}`);
   const watertight = part.status === 'NoError' && checkWatertight(parseBinaryStl(stl)).watertight;
@@ -112,7 +121,11 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
 
     const zipInput: Record<string, Uint8Array> = {};
     names.forEach((n, i) => (zipInput[n] = new Uint8Array(entries[i].stl)));
-    zipInput['projekt.json'] = new TextEncoder().encode(serializeProject(req.project));
+    const enc = new TextEncoder();
+    zipInput['projekt.json'] = enc.encode(serializeProject(req.project));
+    const layout = computeLayout(req.project);
+    zipInput['Einraeumanleitung.html'] = enc.encode(assemblyHtml(req.project, layout));
+    zipInput['Explosionszeichnung.svg'] = enc.encode(assemblySvg(req.project, layout, { explode: Math.max(20, usableHeight(req.project.box) * 0.35), width: 1200 }));
     const zipped = zipSync(zipInput, { level: 6 });
     const data = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
     const safe = (req.project.name || 'Insert').replace(/[^A-Za-z0-9._-]+/g, '_');
