@@ -1,64 +1,69 @@
 /**
- * Grundplatte mit Verriegelungsrippen auf den Rasterlinien sowie die
- * passenden Nuten im Boden der Module.
+ * Grundplatte: dünne Platte mit Rippen entlang der Kanten aller Module, die
+ * direkt auf ihr stehen. Die Rippen greifen in die Bodenfase der Module –
+ * dadurch verrutscht die unterste Lage nicht, unabhängig vom Rastermaß.
  *
- * Rippenprofil: Trapez mit 45°-Flanken (stützfrei druckbar). Module stehen auf
- * der Platte, die Rippen greifen in die Nuten – dadurch verrutscht nichts.
+ * Rippenprofil: Trapez mit 45°-Flanken (stützfrei), passend zur Fase.
  */
-import { BASEPLATE_THICKNESS, gridInfo, gridLineX, gridLineY, RIB_BASE, RIB_HEIGHT, RIB_TOP, type GridInfo } from '../dimensions';
+import { BASEPLATE_THICKNESS, LOCK_CHAMFER } from '../dimensions';
 import type { ManifoldToplevel, Manifold, Scope } from '../kernel';
-import { tileBounds } from '../parts';
+import { computeLayout } from '../layout';
+import { groundInstances } from '../parts';
 import { box, prismX, prismY } from '../primitives';
 import type { BaseplateTile, Project } from '../types';
 
-export function buildBaseplate(k: ManifoldToplevel, s: Scope, tile: BaseplateTile, p: Project): Manifold {
-  const g = gridInfo(p);
-  const b = tileBounds(tile, g);
-  const w = b.x1 - b.x0;
-  const d = b.y1 - b.y0;
-  const T = BASEPLATE_THICKNESS;
-  const parts: Manifold[] = [box(k, s, 0, 0, 0, w, d, T + 0.01)];
-  const profile = (c: number): [number, number][] => [
-    [c - RIB_BASE / 2, T - 0.01],
-    [c + RIB_BASE / 2, T - 0.01],
-    [c + RIB_TOP / 2, T + RIB_HEIGHT],
-    [c - RIB_TOP / 2, T + RIB_HEIGHT],
-  ];
-  for (let i = tile.cx; i <= tile.cx + tile.nx; i++) parts.push(prismY(k, s, profile(gridLineX(g, i) - b.x0), -1, d + 2));
-  for (let j = tile.cy; j <= tile.cy + tile.ny; j++) parts.push(prismX(k, s, profile(gridLineY(g, j) - b.y0), -1, w + 2));
-  const all = s.track(k.Manifold.union(parts));
-  return s.track(all.intersect(box(k, s, 0, 0, 0, w, d, T + RIB_HEIGHT + 1)));
+export function ribProfile(c: number): { base: number; top: number; height: number } {
+  const half = LOCK_CHAMFER - c;
+  return { base: 2 * half, top: 0.4, height: half - 0.2 };
 }
 
-/**
- * Nuten im Modulboden. Das Modul liegt mit seiner linken vorderen Ecke im
- * Ursprung, um c/2 von der ersten Rasterlinie versetzt.
- */
-export function buildGrooves(
-  k: ManifoldToplevel,
-  s: Scope,
-  width: number,
-  depth: number,
-  cellX: number,
-  cellY: number,
-  g: GridInfo,
-): Manifold {
-  const c = g.clearance;
-  const B = RIB_BASE + 2 * c + 0.2;
-  const Tp = RIB_TOP + 2 * c + 0.2;
-  const Hg = RIB_HEIGHT + c;
-  const profile = (x: number): [number, number][] => [
-    [x - B / 2, -1],
-    [x + B / 2, -1],
-    [x + B / 2, 0],
-    [x + Tp / 2, Hg],
-    [x - Tp / 2, Hg],
-    [x - B / 2, 0],
+export function buildBaseplate(k: ManifoldToplevel, s: Scope, tile: BaseplateTile, p: Project): Manifold {
+  const c = p.print.clearance;
+  const w = tile.x1 - tile.x0;
+  const d = tile.y1 - tile.y0;
+  const T = BASEPLATE_THICKNESS;
+  const rib = ribProfile(c);
+  const parts: Manifold[] = [box(k, s, 0, 0, 0, w, d, T + 0.01)];
+  const prof = (cx: number): [number, number][] => [
+    [cx - rib.base / 2, T - 0.01],
+    [cx + rib.base / 2, T - 0.01],
+    [cx + rib.top / 2, T + rib.height],
+    [cx - rib.top / 2, T + rib.height],
   ];
-  const parts: Manifold[] = [];
-  const nx = Math.round((width + c) / cellX);
-  const ny = Math.round((depth + c) / cellY);
-  for (let i = 0; i <= nx; i++) parts.push(prismY(k, s, profile(-c / 2 + i * cellX), -1, depth + 2));
-  for (let j = 0; j <= ny; j++) parts.push(prismX(k, s, profile(-c / 2 + j * cellY), -1, width + 2));
-  return s.track(k.Manifold.union(parts));
+  // Kantenstücke je Linie sammeln und zusammenfassen (keine überlappenden Rippen)
+  const lines = new Map<string, { axis: 'x' | 'y'; at: number; segs: [number, number][] }>();
+  const addSeg = (axis: 'x' | 'y', at: number, from: number, to: number) => {
+    const key = `${axis}:${at.toFixed(2)}`;
+    const e = lines.get(key) ?? { axis, at, segs: [] };
+    e.segs.push([from + 0.5, to - 0.5]);
+    lines.set(key, e);
+  };
+  for (const i of groundInstances(p, computeLayout(p))) {
+    addSeg('x', i.x - c / 2, i.y, i.y + i.depth);
+    addSeg('x', i.x + i.width + c / 2, i.y, i.y + i.depth);
+    addSeg('y', i.y - c / 2, i.x, i.x + i.width);
+    addSeg('y', i.y + i.depth + c / 2, i.x, i.x + i.width);
+  }
+  for (const { axis, at, segs } of lines.values()) {
+    segs.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [];
+    for (const sg of segs) {
+      const last = merged[merged.length - 1];
+      if (last && sg[0] <= last[1] + 1.5) last[1] = Math.max(last[1], sg[1]);
+      else merged.push([...sg]);
+    }
+    for (const [from, to] of merged) {
+      if (axis === 'x') {
+        const lo = Math.max(from, tile.y0) - tile.y0;
+        const hi = Math.min(to, tile.y1) - tile.y0;
+        if (hi - lo > 2 && at > tile.x0 - rib.base && at < tile.x1 + rib.base) parts.push(prismY(k, s, prof(at - tile.x0), lo, hi - lo));
+      } else {
+        const lo = Math.max(from, tile.x0) - tile.x0;
+        const hi = Math.min(to, tile.x1) - tile.x0;
+        if (hi - lo > 2 && at > tile.y0 - rib.base && at < tile.y1 + rib.base) parts.push(prismX(k, s, prof(at - tile.y0), lo, hi - lo));
+      }
+    }
+  }
+  const all = parts.length > 1 ? s.track(k.Manifold.union(parts)) : parts[0];
+  return s.track(all.intersect(box(k, s, 0, 0, 0, w, d, T + rib.height + 1)));
 }

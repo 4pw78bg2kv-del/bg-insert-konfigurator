@@ -21,16 +21,19 @@ export function useCommand(handler: (cmd: AppCommand) => void) {
 }
 
 export const SHORTCUTS: { keys: string; text: string }[] = [
-  { keys: 'Pfeiltasten', text: 'Gewähltes Modul verschieben (Raster: 1 Zelle, sonst 1 mm)' },
+  { keys: 'Pfeiltasten', text: 'Gewähltes Modul verschieben (Raster: 1 Feld, sonst 1 mm)' },
   { keys: 'Umschalt + Pfeiltasten', text: 'Ohne Raster: in 10-mm-Schritten verschieben' },
   { keys: 'R', text: 'Gewähltes Modul um 90° drehen' },
   { keys: 'A', text: 'Position automatisch / manuell umschalten' },
-  { keys: 'Bild ↑ / Bild ↓', text: 'Modul eine Ebene höher / tiefer legen' },
+  { keys: 'Umschalt + R', text: 'Ganze Anordnung um 90° drehen' },
+  { keys: 'Bild ↑ / Bild ↓', text: 'Modul eine Stapelstufe höher / tiefer legen' },
   { keys: 'Tab / Umschalt + Tab', text: 'Nächstes / vorheriges Modul wählen' },
   { keys: 'Esc', text: 'Auswahl aufheben' },
   { keys: 'Entf', text: 'Gewähltes Modul löschen' },
   { keys: 'Strg + D', text: 'Gewähltes Modul duplizieren' },
-  { keys: 'K / G', text: 'Neues Kartenfach / neue Rasterbox' },
+  { keys: 'K / G / F', text: 'Neues Kartenfach / neue Fächerbox / neue Aufleger-Box' },
+  { keys: 'V', text: 'Vorlagen öffnen' },
+  { keys: 'I', text: 'Insert aus Teileliste (Inventar)' },
   { keys: 'Strg + Z', text: 'Rückgängig' },
   { keys: 'Strg + Y  oder  Strg + Umschalt + Z', text: 'Wiederholen' },
   { keys: 'Strg + S', text: 'Projekt speichern (JSON)' },
@@ -66,11 +69,14 @@ export function useShortcuts() {
       }
       if (e.key === 'Escape') {
         if (st.helpOpen) st.setHelpOpen(false);
+        else if (st.galleryOpen) st.setGalleryOpen(false);
+        else if (st.inventoryOpen) st.setInventoryOpen(false);
         else if (isTyping(e.target)) (e.target as HTMLElement).blur();
         else st.select(null);
         return;
       }
       if (isTyping(e.target)) return;
+      if (st.galleryOpen || st.inventoryOpen) return;
 
       if (mod && key === 'z') {
         e.preventDefault();
@@ -115,7 +121,7 @@ export function useShortcuts() {
       }
       if ((e.key === 'PageUp' || e.key === 'PageDown') && sel) {
         e.preventDefault();
-        st.shiftLayer(sel, e.key === 'PageUp' ? 1 : -1);
+        st.shiftLevel(sel, e.key === 'PageUp' ? 1 : -1);
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && sel) {
@@ -125,7 +131,8 @@ export function useShortcuts() {
       }
       switch (key) {
         case 'r':
-          if (sel) st.rotate(sel);
+          if (e.shiftKey) st.rotateAll();
+          else if (sel) st.rotate(sel);
           break;
         case 'a':
           if (sel) {
@@ -139,6 +146,15 @@ export function useShortcuts() {
           break;
         case 'g':
           st.addModule('gridBox');
+          break;
+        case 'f':
+          st.addModule('shapeBox');
+          break;
+        case 'v':
+          st.setGalleryOpen(true);
+          break;
+        case 'i':
+          st.setInventoryOpen(true);
           break;
         case '1':
           st.setViewMode('all');

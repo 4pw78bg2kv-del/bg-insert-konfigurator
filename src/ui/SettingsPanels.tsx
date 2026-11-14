@@ -1,6 +1,22 @@
-import { baseplateTiles, gridInfo, layerInfos, outerBoxSize, usableHeight } from '../geometry';
+import {
+  BED_MARGIN,
+  FONTS,
+  PRINTERS,
+  baseplateTiles,
+  gridInfo,
+  outerBoxSize,
+  printerPreset,
+  recommendedPrint,
+  usableHeight,
+  type FontId,
+  type Material,
+} from '../geometry';
 import { useStore } from '../state/store';
-import { CheckField, NumberField, Section } from './fields';
+import { CheckField, NumberField, Section, Segmented, SelectField } from './fields';
+
+export function fmt(v: number, digits = 1): string {
+  return v.toLocaleString('de-DE', { maximumFractionDigits: digits });
+}
 
 export function BoxPanel() {
   const box = useStore((s) => s.project.box);
@@ -20,13 +36,12 @@ export function BoxPanel() {
           label="Kopfraum"
           value={box.headroom}
           min={0}
-          hint="Platz oben für Spielbretter, Tableaus und Anleitungen"
+          hint="Platz oben für Spielbrett, Tableaus und Anleitung"
           onChange={(v) => setBox({ headroom: v })}
         />
       </div>
       <p className="muted small">
-        Außenmaße {fmt(outer.width)} × {fmt(outer.depth)} × {fmt(outer.height)} mm · nutzbare Ebenenhöhe{' '}
-        <strong>{fmt(usableHeight(box))} mm</strong>
+        Außenmaße {fmt(outer.width)} × {fmt(outer.depth)} × {fmt(outer.height)} mm · nutzbare Höhe <strong>{fmt(usableHeight(box))} mm</strong>
       </p>
     </Section>
   );
@@ -35,121 +50,131 @@ export function BoxPanel() {
 export function PrintPanel() {
   const print = useStore((s) => s.project.print);
   const setPrint = useStore((s) => s.setPrint);
+  const rec = recommendedPrint(print.material, print.nozzle);
+  const differs = (Object.keys(rec) as (keyof typeof rec)[]).some((k) => Math.abs(rec[k] - print[k]) > 1e-6);
+  const preset = printerPreset(print.printer);
   return (
-    <Section title="3D-Druck">
+    <Section title="3D-Drucker und Material">
+      <SelectField
+        label="Drucker"
+        value={print.printer}
+        options={[...PRINTERS.map((p) => ({ value: p.id, label: `${p.label} (${p.bedX} × ${p.bedY} × ${p.bedZ})` })), { value: 'custom', label: 'Eigene Bettgröße' }]}
+        onChange={(printer) => {
+          const p = printerPreset(printer);
+          setPrint(p ? { printer, bedX: p.bedX, bedY: p.bedY, bedZ: p.bedZ } : { printer });
+        }}
+      />
+      {!preset && (
+        <div className="grid3">
+          <NumberField label="Bett X" value={print.bedX} min={50} onChange={(bedX) => setPrint({ bedX })} />
+          <NumberField label="Bett Y" value={print.bedY} min={50} onChange={(bedY) => setPrint({ bedY })} />
+          <NumberField label="Bauhöhe" value={print.bedZ} min={20} onChange={(bedZ) => setPrint({ bedZ })} />
+        </div>
+      )}
+      <p className="muted small">
+        Größtes Teil: {fmt(print.bedX - BED_MARGIN)} × {fmt(print.bedY - BED_MARGIN)} × {fmt(print.bedZ)} mm ({BED_MARGIN} mm Rand für Skirt/Brim). Größere Teile werden als Fehler gemeldet.
+      </p>
       <div className="grid2">
-        <NumberField
-          label="Spaltmaß (Clearance)"
-          value={print.clearance}
-          min={0}
-          max={5}
-          step={0.05}
-          hint="Abstand zwischen Teilen und zur Schachtelwand"
-          onChange={(v) => setPrint({ clearance: v })}
+        <label className="field">
+          <span className="field-label">Material</span>
+          <Segmented<Material>
+            value={print.material}
+            options={[
+              { value: 'PLA', label: 'PLA' },
+              { value: 'PETG', label: 'PETG' },
+            ]}
+            onChange={(material) => setPrint({ material })}
+          />
+        </label>
+        <SelectField
+          label="Düse"
+          value={String(print.nozzle)}
+          options={['0.2', '0.4', '0.6', '0.8'].map((v) => ({ value: v, label: `${v.replace('.', ',')} mm` }))}
+          onChange={(v) => setPrint({ nozzle: Number(v) })}
         />
-        <NumberField label="Außenwand" value={print.wallThickness} min={0.4} step={0.4} onChange={(v) => setPrint({ wallThickness: v })} />
-        <NumberField label="Boden" value={print.floorThickness} min={0.2} step={0.2} onChange={(v) => setPrint({ floorThickness: v })} />
-        <NumberField label="Trennwand" value={print.dividerThickness} min={0.4} step={0.4} onChange={(v) => setPrint({ dividerThickness: v })} />
       </div>
-    </Section>
-  );
-}
-
-export function fmt(v: number, digits = 1): string {
-  return v.toLocaleString('de-DE', { maximumFractionDigits: digits });
-}
-
-export function GridPanel() {
-  const project = useStore((s) => s.project);
-  const setGrid = useStore((s) => s.setGrid);
-  const grid = project.grid;
-  const g = gridInfo(project);
-  const tiles = grid.enabled && grid.baseplate ? baseplateTiles(project).length : 0;
-  return (
-    <Section title="Innenraster">
-      <CheckField label="Alle Module nach Innenraster aufbauen" checked={grid.enabled} onChange={(enabled) => setGrid({ enabled })} />
-      {grid.enabled && (
-        <>
-          <div className="grid2">
-            <NumberField label="Zellgröße (Ziel)" value={grid.targetCell} min={5} max={200} onChange={(targetCell) => setGrid({ targetCell })} />
-            <NumberField label="Max. Kachelgröße" value={grid.maxTileSize} min={20} hint="Größte Kante einer Grundplatten-Kachel (Druckbett)" onChange={(maxTileSize) => setGrid({ maxTileSize })} />
-          </div>
-          <CheckField label="Grundplatte zum Einrasten (Module verrutschen nicht)" checked={grid.baseplate} onChange={(baseplate) => setGrid({ baseplate })} />
-          <p className="muted small">
-            {g.nx} × {g.ny} Zellen à {fmt(g.cellX, 2)} × {fmt(g.cellY, 2)} mm
-            {tiles > 0 && ` · Grundplatte in ${tiles} Kachel${tiles > 1 ? 'n' : ''}`}. Module belegen ganze Zellen; die Grundplatte hat Rippen auf den Rasterlinien, die Module passende Nuten im Boden.
-          </p>
-        </>
+      <div className="grid2">
+        <NumberField label="Spaltmaß" value={print.clearance} min={0} max={5} step={0.05} hint="Abstand zwischen Teilen, zur Schachtelwand und bei Deckeln" onChange={(clearance) => setPrint({ clearance })} />
+        <NumberField label="Außenwand" value={print.wallThickness} min={0.4} step={0.4} onChange={(wallThickness) => setPrint({ wallThickness })} />
+        <NumberField label="Boden" value={print.floorThickness} min={0.2} step={0.2} onChange={(floorThickness) => setPrint({ floorThickness })} />
+        <NumberField label="Trennwand" value={print.dividerThickness} min={0.4} step={0.4} onChange={(dividerThickness) => setPrint({ dividerThickness })} />
+        <NumberField
+          label="Bodenfase"
+          value={print.bottomChamfer}
+          min={0}
+          max={2}
+          step={0.1}
+          hint="Kleine Fase an der Unterkante gegen den Elefantenfuß (mit Grundplatte automatisch 1,6 mm)"
+          onChange={(bottomChamfer) => setPrint({ bottomChamfer })}
+        />
+      </div>
+      {differs && (
+        <button type="button" className="link small" onClick={() => setPrint(rec)}>
+          Empfehlung für {print.material} mit {fmt(print.nozzle)}-mm-Düse übernehmen (Wand {fmt(rec.wallThickness)}, Spalt {fmt(rec.clearance, 2)} mm)
+        </button>
       )}
     </Section>
   );
 }
 
-export function LayersPanel() {
+export function GridPanel() {
   const project = useStore((s) => s.project);
-  const activeLayerId = useStore((s) => s.activeLayerId);
-  const { addLayer, updateLayer, removeLayer, setActiveLayer } = useStore.getState();
-  const infos = layerInfos(project);
-  const total = infos.reduce((s, l) => s + l.height, 0);
-  const usable = usableHeight(project.box);
+  const setGrid = useStore((s) => s.setGrid);
+  const setBaseplate = useStore((s) => s.setBaseplate);
+  const grid = project.grid;
+  const g = gridInfo(project);
+  const tiles = project.baseplate.enabled ? baseplateTiles(project).length : 0;
   return (
-    <Section
-      title="Ebenen"
-      actions={<button type="button" className="btn small" onClick={addLayer}>+ Ebene</button>}
-    >
-      <ul className="layer-list">
-        {[...infos].reverse().map((info) => {
-          const l = info.layer;
-          const count = project.modules.filter((m) => m.layerId === l.id).length;
-          return (
-            <li key={l.id} className={l.id === activeLayerId ? 'active' : ''} onClick={() => setActiveLayer(l.id)}>
-              <button
-                type="button"
-                className="icon"
-                title={l.visible ? 'Ausblenden' : 'Einblenden'}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  updateLayer(l.id, { visible: !l.visible });
-                }}
-              >
-                {l.visible ? '👁' : '◌'}
-              </button>
-              <input className="layer-name" value={l.name} onClick={(e) => e.stopPropagation()} onChange={(e) => updateLayer(l.id, { name: e.target.value })} />
-              <span className="muted small">{count} Mod.</span>
-              <select
-                className="small-select"
-                value={l.heightMode}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => updateLayer(l.id, { heightMode: e.target.value as 'auto' | 'fixed', height: Math.round(info.height * 10) / 10 })}
-              >
-                <option value="auto">Auto</option>
-                <option value="fixed">Fest</option>
-              </select>
-              {l.heightMode === 'fixed' ? (
-                <span className="layer-height" onClick={(e) => e.stopPropagation()}>
-                  <NumberField label="" value={l.height} min={2} onChange={(height) => updateLayer(l.id, { height })} />
-                </span>
-              ) : (
-                <span className="small layer-height">{fmt(info.height)} mm</span>
-              )}
-              <button
-                type="button"
-                className="icon danger"
-                title="Ebene löschen"
-                disabled={project.layers.length <= 1}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeLayer(l.id);
-                }}
-              >
-                ✕
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <p className={`small ${total > usable + 0.01 ? 'bad' : 'muted'}`}>
-        Ebenen gesamt {fmt(total)} von {fmt(usable)} mm. Oberste Ebene steht oben in der Liste; „Auto“-Ebenen teilen sich die restliche Höhe.
+    <Section title="Raster und Grundplatte">
+      <CheckField label="Module auf ein Raster ausrichten" checked={grid.enabled} onChange={(enabled) => setGrid({ enabled })} />
+      {grid.enabled && (
+        <>
+          <NumberField label="Rastermaß" value={grid.pitch} min={3} max={200} step={1} hint="z. B. 5 mm für feines Raster oder 21 mm wie Gridfinity" onChange={(pitch) => setGrid({ pitch })} />
+          <span className="field-label">Schachtel füllen</span>
+          <Segmented
+            value={grid.fit}
+            options={[
+              { value: 'stretch', label: 'Raster leicht strecken' },
+              { value: 'exact', label: 'Rastermaß exakt' },
+            ]}
+            onChange={(fit) => setGrid({ fit })}
+          />
+          <span className="field-label">Aufgerundeter Platz geht in</span>
+          <Segmented
+            value={grid.grow}
+            options={[
+              { value: 'inner', label: 'Innenraum' },
+              { value: 'wall', label: 'Dickere Wände' },
+            ]}
+            onChange={(grow) => setGrid({ grow })}
+          />
+          <p className="muted small">
+            {g.nx} × {g.ny} Felder à {fmt(g.cellX, 2)} × {fmt(g.cellY, 2)} mm. Jedes Modul wird auf ganze Felder aufgerundet.
+          </p>
+        </>
+      )}
+      <CheckField label="Grundplatte (hält die unterste Lage fest)" checked={project.baseplate.enabled} onChange={(enabled) => setBaseplate({ enabled })} />
+      {project.baseplate.enabled && (
+        <p className="muted small">
+          Flache Platte mit Rippen entlang der Modulkanten; die Module haben unten eine passende Fase. {tiles > 1 ? `Wird fürs Druckbett in ${tiles} Teile geteilt.` : 'Passt in einem Stück aufs Druckbett.'}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+export function LabelPanel() {
+  const labels = useStore((s) => s.project.labels);
+  const setLabels = useStore((s) => s.setLabels);
+  return (
+    <Section title="Beschriftung">
+      <SelectField<FontId> label="Schrift" value={labels.font} options={FONTS.map((f) => ({ value: f.id, label: f.label }))} onChange={(font) => setLabels({ font })} />
+      <div className="grid2">
+        <NumberField label="Schrifttiefe" value={labels.depth} min={0.4} max={4} step={0.2} hint="Vertiefte Schrift in Wänden und Deckeln" onChange={(depth) => setLabels({ depth })} />
+        <NumberField label="Erhaben (Trenner)" value={labels.raised} min={0.2} max={2} step={0.2} hint="Höhe der erhabenen Schrift auf Kartentrennern" onChange={(raised) => setLabels({ raised })} />
+      </div>
+      <p className="muted small">
+        Die Schrift wird zusätzlich als eigenes Teil exportiert. Im Slicer als Teil desselben Objekts laden und eine andere Farbe zuweisen, dann wird sie mehrfarbig gedruckt.
       </p>
     </Section>
   );

@@ -3,41 +3,54 @@
 Parametrischer Web-Konfigurator für 3D-druckbare Brettspiel-Inserts mit direktem,
 geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
 
-**Live-Vorschau:** https://4pw78bg2kv-del.github.io/bg-insert-konfigurator/ (nach dem ersten Deploy von `main`)
+**Live-Vorschau:** https://4pw78bg2kv-del.github.io/bg-insert-konfigurator/
 
 ## Funktionsumfang
 
 - **Spielschachtel:** Innenmaße, Karton-Wand/Boden (→ Außenmaße), reservierter Kopfraum, nutzbare Höhe.
-- **Ebenen:** beliebig viele gestapelte Ebenen (feste Höhe oder „Auto“ = Resthöhe teilen), einzeln ein-/ausblendbar, Explosionsansicht.
-- **Innenraster:** alle Module belegen ganze Rasterzellen, die die Schachtel exakt füllen. Optional eine **Grundplatte mit
-  Verriegelungsrippen** (45°-Flanken, stützfrei), in die die Module mit Nuten im Boden einrasten. Die Platte wird automatisch in
-  druckbare Kacheln geteilt.
-- **Kartenfach:** 7 Presets oder eigene Maße, Sleeves-Kalkulator, stehend oder liegend, **Hoch-/Querformat**, **senkrecht oder schräg**
-  (Neigung frei wählbar), **1- oder 2-reihig**.
-  - **Feste Fächer** (mitgedruckt) oder **variable Trenner**: glatte Wände (frei verschiebbar) oder **Zackenmuster** (Trenner rasten ein).
-  - Variable Trenner: **Karten und Trenner gesamt** angeben, die Länge wird automatisch berechnet. Trenner werden als eigene STL
-    exportiert, optional mit **Beschriftungslasche** (auch versetzt links/Mitte/rechts).
-  - **Höhe automatisch:** so hoch wie Karten plus Lasche, ohne Überstand.
-  - Griffmulde (teilweise oder bis zum Boden), Griffloch im Boden.
-- **Rasterbox:** freie Aufteilung (Reihen mit eigenen Spaltenanteilen, z. B. „1 2 1“), abgesenkte Trennwände,
-  Griffmulden (teilweise / bis zum Boden; vorne, vorne+hinten oder links+rechts), Grifflöcher im Boden,
-  **Steckdeckel mit Rastnasen** (eigene STL, mit Öffnungsmulde).
-- **Layout:** automatische Anordnung, pro Modul umschaltbar auf manuelle Position (Zelle bzw. mm, Pfeiltasten, 90°-Drehung).
-- **Prüfungen:** Kollisionen, Überstand, zu hohe Karten/Module/Ebenen, zu kleine Fächer.
-- **3D-Vorschau:** Gesamtansicht mit transparenter Schachtel, Deckeln, Trennern und Grundplatte; Einzelteilansicht in Druckorientierung.
-- **Export:** Binär-STL pro Teil oder alles als ZIP (`2x_Kartenfach_Poker_Trenner_links.stl` usw., inkl. `projekt.json`).
-- **Projekt:** Speichern/Laden als JSON (alte Dateien werden übernommen), Autosave im Browser, Rückgängig/Wiederholen.
+- **Drucker und Material:** Profile für Bambu Lab (H3C, H2S, H2D, X1, P2S, P1, A1, A1 mini), Prusa, Creality, Elegoo, Voron
+  oder eigene Bettgröße. Teile, die nicht aufs Druckbett passen, werden als Fehler gemeldet; die Grundplatte wird automatisch
+  passend geteilt. Empfohlene Wandstärken und Spaltmaße für PLA und PETG je Düse.
+- **Stapelstufen statt starrer Ebenen:** Jedes Modul hat eine Stufe; höhere Stufen legen sich auf das, was darunter liegt,
+  auch auf Module unterschiedlicher Höhe („Stufe 1,5“). Höhe nach Inhalt, bis zum Deckel oder frei.
+- **Raster:** frei wählbares Rastermaß (z. B. 5 mm), Module werden auf ganze Felder aufgerundet; der Zuwachs geht wahlweise
+  in den Innenraum oder in dickere Wände. Optional eine **Grundplatte**, deren Rippen die unterste Lage festhalten.
+- **Kartenfach:** 7 Presets oder eigene Maße, Sleeves-Kalkulator, stehend oder liegend, Hoch-/Querformat, senkrecht oder schräg,
+  1- oder 2-reihig, feste Fächer oder Trenner (glatt oder mit Zacken), Laschen auch versetzt.
+  **Einzeln beschriftete Trenner** (erhabene Schrift), Liste per Hand oder aus CSV/Excel (erste Spalte).
+- **Fächerbox mit visuellem Editor:** Fächer anklicken, nebeneinander/hintereinander teilen, verbinden, Größe als Anteil, in mm
+  oder passend zum Inhalt. Inhalt je Fach: leer, Token-Mulde (gerundet) oder Karten liegend/stehend, z. B. 2 Standardkarten
+  liegend + 2 Minikarten stehend + 2 Token-Mulden in einer Box.
+- **Aufleger-Box:** Taschen in 16 Formen (Kreis, Oval, Rechteck, Dreieck, Raute, Vieleck, Stern, Pfeil, Doppelpfeil, Kreuz,
+  Herz, Blitz, Fahne, Sprechblase …), frei per Maus platzierbar, drehbar, mit **Maßzeichnung**, Griffmulden und
+  **Schnellgenerator** („9 Kreise für je 8 Aufleger mit Griffmulde“).
+- **Deckel:** Stülp-, Rast-, Schiebe-, Magnet- (4 Magnete, Größe wählbar) und Klappdeckel (Scharnier mit 1,75-mm-Filament).
+- **Beschriftung:** Name 2 mm tief in Deckel und Seitenwände, in druckgeeigneten Schriften (Droid Sans/Serif Bold, Optimer Bold).
+  Die Schrift wird zusätzlich als eigenes Teil exportiert, um sie im Slicer in einer anderen Farbe zu drucken.
+- **Vorlagen-Galerie:** 14 fertige Module (Nachziehstapel, Kombi-Box, Spieler-Box, Sortierkasten mit Magnetdeckel,
+  Kartenbox mit Schiebedeckel, Würfelschale, Stiftehalter, Münzen, Sechsecke, Sonderformen …).
+- **Insert aus Teileliste:** Excel-/CSV-Vorlage herunterladen, Teile mit Kategorie, Bauteilart und Anzahl eintragen, wieder
+  hochladen; daraus entstehen Kartenfächer, Aufleger-Boxen und Fächerboxen, die bei Platzmangel automatisch gestapelt werden.
+- **Rasterbogen A4:** Raster mit Lineal und 100-mm-Prüfstrecke zum Auslegen der Teile sowie alle Kartenformate in Originalgröße
+  (mit und ohne Hülle) zum Nachmessen.
+- **Layout:** automatische Anordnung, manuelle Position (Pfeiltasten), 90°-Drehung je Modul oder für die ganze Anordnung.
+- **Prüfungen:** Kollisionen, Überstand, Druckbett, zu hohe Karten/Module, zu kleine Fächer, zu enge Taschen, Schriftgröße.
+- **Export:** Binär-STL pro Teil oder alles als ZIP inkl. `projekt.json`, **Einräumanleitung (HTML)** und
+  **Explosionszeichnung (SVG)** mit nummerierter Reihenfolge.
+- **Projekt:** Speichern/Laden als JSON (Dateien aus früheren Versionen werden übernommen), Autosave, Rückgängig/Wiederholen.
 
 ## Tastaturbefehle
 
 | Taste | Aktion |
 | --- | --- |
 | Pfeiltasten (Umschalt = 10 mm) | Modul verschieben |
-| R / A | 90° drehen / automatisch ↔ manuell |
-| Bild ↑ / Bild ↓ | Modul eine Ebene höher / tiefer |
+| R / Umschalt+R | Modul / ganze Anordnung um 90° drehen |
+| A | automatisch ↔ manuell |
+| Bild ↑ / Bild ↓ | Modul eine Stapelstufe höher / tiefer |
 | Tab / Umschalt+Tab | nächstes / vorheriges Modul |
 | Entf, Strg+D, Esc | löschen, duplizieren, Auswahl aufheben |
-| K / G | neues Kartenfach / neue Rasterbox |
+| K / G / F | neues Kartenfach / Fächerbox / Aufleger-Box |
+| V / I | Vorlagen / Insert aus Teileliste |
 | Strg+Z / Strg+Y | rückgängig / wiederholen |
 | Strg+S / Strg+O / Strg+E | speichern / laden / ZIP-Export |
 | 1 / 2 / B | Gesamtansicht / Einzelteil / Schachtel ein-aus |
@@ -63,8 +76,16 @@ src/
     validate.ts    Kollisions- und Plausibilitätsprüfung
     project.ts     Standardwerte, Dateinamen, JSON laden/speichern
     kernel.ts      Manifold-WASM-Initialisierung, Speicherverwaltung
-    parts.ts       Stückliste (Modul, Deckel, Trenner, Grundplatten) und Vorschau-Platzierung
-    parts/         Bauteile: cardTray, divider, gridBox (+ Deckel), baseplate (+ Nuten)
+    printers.ts    Druckerprofile, Druckbett-Prüfung
+    shapes.ts      Formen der Aufleger-Box (Umrisse, Maßlinien)
+    text.ts        Schriften (typeface.json, Latin-1) → Umrisse
+    templates.ts   Vorlagen-Galerie
+    inventory.ts   Teileliste: Vorlage (XLSX/CSV), Import, automatisches Insert
+    assembly.ts    Einräumanleitung und Explosionszeichnung (SVG)
+    sheets.ts      Rasterbogen A4 und Kartenformate 1:1
+    parts.ts       Stückliste (Modul, Schrift, Deckel, Trenner, Grundplatten) und Vorschau-Platzierung
+    parts/         Bauteile: cardTray, gridBox, shapeBox, lids, divider, baseplate, common (Deckelaufnahmen, Schrift)
+    fonts/         Schriften mit Lizenzen
     build.ts       Teil → Mesh (inkl. float32-sicherer Vereinfachung)
     stl.ts         Binär-STL schreiben/lesen, Wasserdicht-Prüfung
   worker/          Web Worker: Geometrie + Export abseits des UI-Threads (mit Cache)
@@ -89,6 +110,5 @@ npm run build      # Produktions-Build nach dist/
 
 1. **MVP** ✓
 2. Runde 2 ✓: Innenraster mit Grundplatte, Ebenen, variable Trenner, Steckdeckel, Tastaturbefehle
-3. Weitere Deckel (Schiebe-, Magnetdeckel), Stapelkanten zwischen Ebenen, Druckbett-Ansicht mit Auto-Nesting, Schnittansichten
-4. Bibliothek: Token-Schalen mit Scoop, Kartenhalter, Hex-Halter, Würfelturm, Stiftehalter, Dashboards, Schubladen
-5. Komfort: Waben-Aussparungen, Text-Prägung, Vertical-Storage-Clips
+3. Runde 3 ✓: Deckelarten, Stapelstufen, Fächer-Editor, Aufleger-Box, Beschriftung, Vorlagen, Teileliste-Import, Druckbett, Einräumanleitung
+4. Ideen: Druckbett-Ansicht mit Auto-Nesting, Schnittansicht, Würfelturm, Spielertableau-Halter, Schubladen, Waben-Aussparungen

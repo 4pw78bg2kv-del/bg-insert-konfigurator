@@ -9,7 +9,7 @@ import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { layerInfos, listParts, scenePlacements, usableHeight, type PlacedInstance, type ScenePlacement } from '../geometry';
+import { listParts, scenePlacements, usableHeight, type PlacedInstance, type ScenePlacement } from '../geometry';
 import { useStore } from '../state/store';
 import type { PartPreview } from '../worker/protocol';
 
@@ -144,14 +144,13 @@ export function Viewport({ layout }: { layout: PlacedInstance[] }) {
     return (pl: { partId: string; moduleId?: string }) => {
       if (pl.partId.startsWith('baseplate:')) return '#6b7280';
       if (pl.partId.includes(':div:')) return '#e9e4da';
+      if (pl.partId.endsWith(':inlay') || pl.partId.endsWith(':lidInlay')) return '#f5f3ee';
       const c = map.get(pl.moduleId ?? '') ?? '#999';
       return pl.partId.endsWith(':lid') ? new THREE.Color(c).offsetHSL(0, -0.1, 0.12).getStyle() : c;
     };
   }, [project.modules]);
 
-  const layers = layerInfos(project);
-  const layerIndex = new Map(layers.map((l) => [l.layer.id, l.index]));
-  const visible = new Set(project.layers.filter((l) => l.visible).map((l) => l.id));
+  const levelView = useStore((s) => s.levelView);
   const placements = useMemo(() => scenePlacements(project, layout), [project, layout]);
   const extent = Math.max(box.innerWidth, box.innerDepth, box.innerHeight);
 
@@ -195,10 +194,11 @@ export function Viewport({ layout }: { layout: PlacedInstance[] }) {
           ) : (
             <>
               {placements.map((pl) => {
-                if (!visible.has(pl.layerId)) return null;
+                if (levelView > 0 && pl.level > levelView) return null;
                 const g = geometries.get(pl.partId);
                 if (!g) return null;
-                const dz = (layerIndex.get(pl.layerId) ?? 0) * explode;
+                const isLid = pl.partId.endsWith(':lid') || pl.partId.endsWith(':lidInlay');
+                const dz = Math.max(0, pl.level - 1) * explode + (isLid ? explode * 0.6 : 0);
                 const isSel = !!pl.moduleId && pl.moduleId === selectedId;
                 return (
                   <Placed key={pl.key} pl={pl} dz={dz}>
@@ -206,6 +206,7 @@ export function Viewport({ layout }: { layout: PlacedInstance[] }) {
                       geometry={g}
                       color={colorOf(pl)}
                       selected={isSel && !pl.partId.includes(':')}
+                      opacity={levelView > 0 && pl.level < levelView && pl.level > 0 ? 0.35 : 1}
                       onSelect={pl.moduleId ? () => select(pl.moduleId!) : undefined}
                     />
                   </Placed>

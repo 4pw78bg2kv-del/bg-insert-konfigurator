@@ -1,13 +1,34 @@
 /**
- * Automatische Anordnung der Module, getrennt für jede Ebene.
+ * Anordnung und Stapeln der Module („Schwerkraft-Stapeln“).
  *
- * - Mit Innenraster: First-Fit auf dem Zellraster (Zeile für Zeile von vorne
- *   links). Manuell platzierte Module belegen ihre Zellen zuerst.
- * - Ohne Raster: Regal-Packung in Listenreihenfolge mit Spaltmaß zwischen
- *   allen Teilen; manuell platzierte Module werden umflossen.
+ * Jedes Modul hat eine Stapelstufe. Stufe 1 liegt auf dem Boden (bzw. auf der
+ * Grundplatte). Ein Modul höherer Stufe fällt auf die höchste Oberkante der
+ * Module tieferer Stufen, die unter seiner Grundfläche liegen. Dadurch sind
+ * beliebige Zwischenhöhen möglich („Ebene 1,5“): Ein Modul kann auf einem
+ * niedrigen Tray liegen, während daneben ein hohes Tray bis zum Deckel reicht.
+ *
+ * Automatisch platzierte Module suchen die beste freie Position: auf Stufe 1
+ * vorne links zuerst, auf höheren Stufen bevorzugt vollständig aufliegend und
+ * möglichst tief.
  */
-import { gridInfo, gridLineX, gridLineY, layerInfoFor, moduleCells, moduleSize, type GridInfo } from './dimensions';
-import type { InsertModule, PlacedInstance, Project } from './types';
+import {
+  cardTrayDims,
+  floorZ,
+  gridBoxDims,
+  gridInfo,
+  gridLineX,
+  gridLineY,
+  moduleSizeWith,
+  shapeBoxDims,
+  usableHeight,
+  type CardTrayLayout,
+  type GridBoxLayout,
+  type GridInfo,
+  type ShapeBoxLayout,
+} from './dimensions';
+import type { CardTrayModule, GridBoxModule, InsertModule, ModuleSize, PlacedInstance, Project, ShapeBoxModule } from './types';
+
+const EPS = 1e-6;
 
 interface Rect {
   x: number;
@@ -16,160 +37,184 @@ interface Rect {
   depth: number;
 }
 
-const EPS = 1e-6;
+function overlapArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const d = Math.min(a.y + a.depth, b.y + b.depth) - Math.max(a.y, b.y);
+  return w > 1e-3 && d > 1e-3 ? w * d : 0;
+}
 
-function overlaps(a: Rect, b: Rect, gap: number): boolean {
+function overlaps(a: Rect, b: Rect, gap = 0): boolean {
   return (
-    a.x < b.x + b.width + gap - EPS &&
-    b.x < a.x + a.width + gap - EPS &&
-    a.y < b.y + b.depth + gap - EPS &&
-    b.y < a.y + a.depth + gap - EPS
+    a.x < b.x + b.width + gap - 1e-3 &&
+    b.x < a.x + a.width + gap - 1e-3 &&
+    a.y < b.y + b.depth + gap - 1e-3 &&
+    b.y < a.y + a.depth + gap - 1e-3
   );
 }
 
-function footprint(m: InsertModule, p: Project) {
-  const s = moduleSize(m, p);
-  return {
-    w: m.placement.rotated ? s.depth : s.width,
-    d: m.placement.rotated ? s.width : s.depth,
-    h: s.height,
-  };
+export interface Solved {
+  layout: PlacedInstance[];
+  /** Verfügbare Höhe je Modul (vom Modulboden bis unter den Schachteldeckel). */
+  avail: Map<string, number>;
 }
 
-export function computeLayout(project: Project): PlacedInstance[] {
-  const g = gridInfo(project);
-  const result: PlacedInstance[] = [];
-  for (const layer of project.layers) {
-    const mods = project.modules.filter((m) => (project.layers.some((l) => l.id === m.layerId) ? m.layerId : project.layers[0]?.id) === layer.id);
-    const z = layerInfoFor(project, layer.id).moduleZ;
-    const placed = g.enabled ? layoutGrid(mods, project, g) : layoutFree(mods, project);
-    for (const r of placed) result.push({ ...r, layerId: layer.id, z });
+const cache = new WeakMap<Project, Solved>();
+
+export function solveProject(p: Project): Solved {
+  const hit = cache.get(p);
+  if (hit) return hit;
+  const usable = usableHeight(p.box);
+  const base = Math.max(1, usable - floorZ(p));
+  let avail = new Map(p.modules.map((m) => [m.id, base]));
+  let layout = place(p, avail);
+  // Höhen „bis zum Deckel“ hängen von der Lage ab: zwei Durchläufe genügen.
+  for (let iter = 0; iter < 2; iter++) {
+    const next = new Map<string, number>();
+    for (const m of p.modules) {
+      const zs = layout.filter((i) => i.moduleId === m.id).map((i) => i.z);
+      next.set(m.id, Math.max(1, usable - Math.max(floorZ(p), ...zs)));
+    }
+    const same = p.modules.every((m) => Math.abs((next.get(m.id) ?? 0) - (avail.get(m.id) ?? 0)) < 1e-6);
+    if (same) break;
+    avail = next;
+    layout = place(p, avail);
   }
-  return result;
+  const solved = { layout, avail };
+  cache.set(p, solved);
+  return solved;
 }
 
-type Placed = Omit<PlacedInstance, 'layerId' | 'z'>;
+export function computeLayout(p: Project): PlacedInstance[] {
+  return solveProject(p).layout;
+}
 
-// ---------------------------------------------------------------------------
+export function moduleAvail(m: InsertModule, p: Project): number {
+  return solveProject(p).avail.get(m.id) ?? Math.max(1, usableHeight(p.box) - floorZ(p));
+}
 
-function layoutGrid(mods: InsertModule[], project: Project, g: GridInfo): Placed[] {
-  const occupied: boolean[][] = Array.from({ length: g.ny }, () => Array<boolean>(g.nx).fill(false));
-  const out: Placed[] = [];
+export function cardTrayLayout(m: CardTrayModule, p: Project): CardTrayLayout {
+  return cardTrayDims(m, p, moduleAvail(m, p));
+}
+export function gridBoxLayout(m: GridBoxModule, p: Project): GridBoxLayout {
+  return gridBoxDims(m, p, moduleAvail(m, p));
+}
+export function shapeBoxLayout(m: ShapeBoxModule, p: Project): ShapeBoxLayout {
+  return shapeBoxDims(m, p, moduleAvail(m, p));
+}
+/** Außenmaße eines Moduls (unrotiert). `height` enthält einen Deckel. */
+export function moduleSize(m: InsertModule, p: Project): ModuleSize {
+  return moduleSizeWith(m, p, moduleAvail(m, p));
+}
 
-  const mark = (gx: number, gy: number, nx: number, ny: number) => {
-    for (let y = gy; y < gy + ny; y++)
-      for (let x = gx; x < gx + nx; x++) if (y >= 0 && y < g.ny && x >= 0 && x < g.nx) occupied[y][x] = true;
-  };
-  const free = (gx: number, gy: number, nx: number, ny: number) => {
-    if (gx < 0 || gy < 0 || gx + nx > g.nx || gy + ny > g.ny) return false;
-    for (let y = gy; y < gy + ny; y++) for (let x = gx; x < gx + nx; x++) if (occupied[y][x]) return false;
-    return true;
-  };
-  const push = (m: InsertModule, i: number, gx: number, gy: number) => {
-    const f = footprint(m, project);
-    out.push({
-      moduleId: m.id,
-      copyIndex: i,
-      x: gridLineX(g, gx) + g.clearance / 2,
-      y: gridLineY(g, gy) + g.clearance / 2,
-      width: f.w,
-      depth: f.d,
-      height: f.h,
-      rotated: m.placement.rotated,
-    });
-  };
-  const cellsOf = (m: InsertModule) => {
-    const c = moduleCells(m, project);
-    return m.placement.rotated ? { nx: c.ny, ny: c.nx } : c;
-  };
-
-  // Manuelle zuerst
-  for (const m of mods) {
-    if (m.placement.mode !== 'manual') continue;
-    const c = cellsOf(m);
-    for (let i = 0; i < Math.max(1, m.quantity); i++) {
-      const gx = Math.round(m.placement.gx) + i * c.nx;
-      const gy = Math.round(m.placement.gy);
-      mark(gx, gy, c.nx, c.ny);
-      push(m, i, gx, gy);
-    }
-  }
-  // Dann automatisch: erste freie Position (vorne links zuerst)
-  for (const m of mods) {
-    if (m.placement.mode !== 'auto') continue;
-    const c = cellsOf(m);
-    for (let i = 0; i < Math.max(1, m.quantity); i++) {
-      let spot: [number, number] | null = null;
-      for (let gy = 0; gy < g.ny && !spot; gy++)
-        for (let gx = 0; gx < g.nx && !spot; gx++) if (free(gx, gy, c.nx, c.ny)) spot = [gx, gy];
-      // Passt nirgends: hinter die Schachtel setzen, Validierung meldet es.
-      if (!spot) spot = [0, g.ny];
-      mark(spot[0], spot[1], c.nx, c.ny);
-      push(m, i, spot[0], spot[1]);
-    }
-  }
-  return out;
+/** Höchste vorkommende Stapelstufe. */
+export function maxLevel(p: Project): number {
+  return Math.max(1, ...p.modules.map((m) => m.level));
 }
 
 // ---------------------------------------------------------------------------
 
-function layoutFree(mods: InsertModule[], project: Project): Placed[] {
-  const { box, print } = project;
-  const gap = print.clearance;
-  const out: Placed[] = [];
+function snapPos(g: GridInfo, x: number, y: number): { x: number; y: number; gx: number; gy: number } {
+  const gx = Math.max(0, Math.round((x - g.x0 - g.clearance / 2) / g.cellX));
+  const gy = Math.max(0, Math.round((y - g.y0 - g.clearance / 2) / g.cellY));
+  return { gx, gy, x: gridLineX(g, gx) + g.clearance / 2, y: gridLineY(g, gy) + g.clearance / 2 };
+}
 
-  for (const m of mods) {
-    if (m.placement.mode !== 'manual') continue;
-    const f = footprint(m, project);
-    for (let i = 0; i < Math.max(1, m.quantity); i++) {
-      out.push({
-        moduleId: m.id,
-        copyIndex: i,
-        x: m.placement.x + i * (f.w + gap),
-        y: m.placement.y,
-        width: f.w,
-        depth: f.d,
-        height: f.h,
-        rotated: m.placement.rotated,
-      });
-    }
-  }
-  const obstacles: Rect[] = out.map((r) => ({ ...r }));
+function place(p: Project, avail: Map<string, number>): PlacedInstance[] {
+  const g = gridInfo(p);
+  const c = p.print.clearance;
+  const usable = usableHeight(p.box);
+  const plate = floorZ(p);
+  const W = p.box.innerWidth;
+  const D = p.box.innerDepth;
+  const placed: PlacedInstance[] = [];
 
-  let cursorX = gap;
-  let rowY = gap;
-  let rowDepth = 0;
-  for (const m of mods) {
-    if (m.placement.mode !== 'auto') continue;
-    const { w, d, h } = footprint(m, project);
-    for (let i = 0; i < Math.max(1, m.quantity); i++) {
-      let placed: Rect | null = null;
-      for (let guard = 0; guard < 500 && !placed; guard++) {
-        const candidate: Rect = { x: cursorX, y: rowY, width: w, depth: d };
-        if (candidate.x + w > box.innerWidth - gap + EPS && cursorX > gap + EPS) {
-          rowY += rowDepth + gap;
-          cursorX = gap;
-          rowDepth = 0;
-          continue;
+  const footprint = (m: InsertModule) => {
+    const s = moduleSizeWith(m, p, avail.get(m.id) ?? usable - plate);
+    return { w: m.placement.rotated ? s.depth : s.width, d: m.placement.rotated ? s.width : s.depth, h: s.height };
+  };
+
+  const supportOf = (r: Rect, level: number) => {
+    const below = placed.filter((q) => q.level < level && overlapArea(q, r) > 0);
+    const top = below.length ? Math.max(...below.map((q) => q.z + q.height)) : plate;
+    const sup = below.filter((q) => Math.abs(q.z + q.height - top) < 0.01);
+    const area = r.width * r.depth || 1;
+    const coverage = below.length ? Math.min(1, sup.reduce((s, q) => s + overlapArea(q, r), 0) / area) : 1;
+    return { z: Math.max(plate, top), supports: [...new Set(sup.map((q) => q.moduleId))], coverage };
+  };
+
+  const push = (m: InsertModule, i: number, x: number, y: number, f: { w: number; d: number; h: number }) => {
+    const r = { x, y, width: f.w, depth: f.d };
+    const s = supportOf(r, m.level);
+    placed.push({ moduleId: m.id, copyIndex: i, level: m.level, x, y, z: s.z, width: f.w, depth: f.d, height: f.h, rotated: m.placement.rotated, supports: s.supports });
+  };
+
+  const levels = [...new Set(p.modules.map((m) => m.level))].sort((a, b) => a - b);
+  for (const level of levels) {
+    const mods = p.modules.filter((m) => m.level === level);
+
+    // Manuell platzierte zuerst (Kopien nebeneinander)
+    for (const m of mods) {
+      if (m.placement.mode !== 'manual') continue;
+      const f = footprint(m);
+      for (let i = 0; i < Math.max(1, m.quantity); i++) {
+        let x = m.placement.x + i * (f.w + c);
+        let y = m.placement.y;
+        if (g.enabled) {
+          const s = snapPos(g, m.placement.x, m.placement.y);
+          const cells = Math.max(1, Math.ceil((f.w + c) / g.cellX - EPS));
+          x = gridLineX(g, s.gx + i * cells) + c / 2;
+          y = s.y;
         }
-        const blocker = obstacles.find((o) => overlaps(candidate, o, gap));
-        if (blocker) {
-          cursorX = blocker.x + blocker.width + gap;
-          if (cursorX + w > box.innerWidth - gap + EPS) {
-            rowY = rowY + Math.max(rowDepth, 1) + gap;
-            cursorX = gap;
-            rowDepth = 0;
-          }
-          continue;
-        }
-        placed = candidate;
+        push(m, i, x, y, f);
       }
-      if (!placed) placed = { x: cursorX, y: rowY, width: w, depth: d };
-      obstacles.push(placed);
-      out.push({ moduleId: m.id, copyIndex: i, x: placed.x, y: placed.y, width: w, depth: d, height: h, rotated: m.placement.rotated });
-      cursorX = placed.x + w + gap;
-      rowDepth = Math.max(rowDepth, d);
+    }
+
+    // Dann automatisch
+    for (const m of mods) {
+      if (m.placement.mode !== 'auto') continue;
+      const f = footprint(m);
+      for (let i = 0; i < Math.max(1, m.quantity); i++) {
+        const cands: { x: number; y: number }[] = [];
+        if (g.enabled) {
+          for (let gy = 0; gy < g.ny; gy++)
+            for (let gx = 0; gx < g.nx; gx++) {
+              const x = gridLineX(g, gx) + c / 2;
+              const y = gridLineY(g, gy) + c / 2;
+              if (x + f.w <= W - c / 2 + 1e-3 && y + f.d <= D - c / 2 + 1e-3) cands.push({ x, y });
+            }
+        } else {
+          const xs = new Set([c / 2, ...placed.flatMap((q) => [q.x + q.width + c, q.x])]);
+          const ys = new Set([c / 2, ...placed.flatMap((q) => [q.y + q.depth + c, q.y])]);
+          for (const y of ys) for (const x of xs) if (x >= c / 2 - 1e-3 && y >= c / 2 - 1e-3 && x + f.w <= W - c / 2 + 1e-3 && y + f.d <= D - c / 2 + 1e-3) cands.push({ x, y });
+        }
+        let best: { x: number; y: number; score: number[] } | null = null;
+        for (const cand of cands) {
+          const r = { x: cand.x, y: cand.y, width: f.w, depth: f.d };
+          const gap = g.enabled ? 0 : c;
+          if (placed.some((q) => q.level === level && overlaps(q, r, gap))) continue;
+          // Auch nicht in höher gestapelte Module hineinragen
+          const s = supportOf(r, level);
+          const h = m.heightMode === 'fill' ? usable - s.z : f.h;
+          if (placed.some((q) => q.level > level && overlaps(q, r) && q.z < s.z + h - 1e-3)) continue;
+          const fits = s.z + h <= usable + 0.01 ? 0 : 1;
+          const score =
+            level <= 1
+              ? [fits, Math.round(cand.y * 100), Math.round(cand.x * 100)]
+              : [fits, s.coverage >= 0.999 ? 0 : s.coverage >= 0.5 ? 1 : 2, Math.round(s.z * 100), Math.round(cand.y * 100), Math.round(cand.x * 100)];
+          if (!best || lexLess(score, best.score)) best = { ...cand, score };
+        }
+        // Passt nirgends: hinter die Schachtel setzen, die Prüfung meldet es.
+        const spot = best ?? { x: c / 2, y: D + 10 + placed.filter((q) => q.y > D).length * 5 };
+        push(m, i, spot.x, spot.y, f);
+      }
     }
   }
-  return out;
+  return placed;
+}
+
+function lexLess(a: number[], b: number[]): boolean {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i] !== b[i]) return a[i] < b[i];
+  }
+  return false;
 }

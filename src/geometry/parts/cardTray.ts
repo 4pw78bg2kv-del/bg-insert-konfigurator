@@ -9,15 +9,22 @@
  *  - `toothed`: Zackenmuster an den Seitenwänden, in dem separate Trenner einrasten.
  * Liegend: Fächer nebeneinander, Daumenmulde in der Vorder-/Rückwand.
  */
-import { cardTrayLayout } from '../dimensions';
+import { TOOTH_BASE } from '../dimensions';
 import type { ManifoldToplevel, Manifold, Scope } from '../kernel';
+import { cardTrayLayout } from '../layout';
+import { labelText } from '../parts';
 import { box, cylinderZ, prismX, prismZ, stadiumZ, uNotch } from '../primitives';
 import type { CardTrayModule, Project } from '../types';
-import { TOOTH_BASE } from '../dimensions';
+import { chamferBottom, lidPrep, sideTexts } from './common';
+import { textBandTop, type BodyResult } from './gridBox';
 
 export function buildCardTray(k: ManifoldToplevel, s: Scope, m: CardTrayModule, p: Project): Manifold {
+  return buildCardTrayParts(k, s, m, p).body;
+}
+
+export function buildCardTrayParts(k: ManifoldToplevel, s: Scope, m: CardTrayModule, p: Project): BodyResult {
   const l = cardTrayLayout(m, p);
-  const wall = p.print.wallThickness;
+  const wall = l.cavityY;
   const div = p.print.dividerThickness;
   const floor = l.floor;
   const H = l.height;
@@ -94,7 +101,7 @@ export function buildCardTray(k: ManifoldToplevel, s: Scope, m: CardTrayModule, 
           const bottom = m.fingerCutout === 'toFloor' ? floor : floor + l.cavityHeight * 0.4;
           if (width > 4 && H - bottom > width / 2) {
             const front = r === 0;
-            straight.push(uNotch(k, s, 'y', cx, front ? -1 : l.depth - wall - 1, wall + 2, width, bottom, H));
+            straight.push(uNotch(k, s, 'y', cx, front ? -1 : l.depth - l.walls.back - 1, (front ? l.walls.front : l.walls.back) + 2, width, bottom, H));
           }
         }
         if (m.floorHole) {
@@ -120,10 +127,25 @@ export function buildCardTray(k: ManifoldToplevel, s: Scope, m: CardTrayModule, 
     const run = (top - floor) * tan;
     // Leicht nach innen versetzt, damit die Schräge die Oberkante nicht exakt in
     // der Hinterkante trifft (sonst entstehen Splitterkanten).
-    const backY = 2 * wall + l.cavityLength - 0.05;
+    const backY = wall + l.walls.back + l.cavityLength - 0.05;
     straight.push(prismX(k, s, [[-1, floor], [0, floor], [run, top], [-1, top]], -1, l.width + 2));
     straight.push(prismX(k, s, [[backY, -1], [l.depth + 1, -1], [l.depth + 1, top], [backY + run, top], [backY, floor]], -1, l.width + 2));
   }
   const all = straight.length ? s.track(k.Manifold.union([cut, ...straight])) : cut;
-  return s.track(outer.subtract(all));
+  let body = s.track(outer.subtract(all));
+  const prep = lidPrep(k, s, m, p, l.width, l.depth, H, l.walls, floor, true);
+  if (prep.add.length) body = s.track(k.Manifold.union([body, ...prep.add]));
+  if (prep.cut.length) body = s.track(body.subtract(s.track(k.Manifold.union(prep.cut))));
+  const text = labelText(m);
+  let textSolid: Manifold | null = null;
+  if (text) {
+    const t = sideTexts(k, s, m, p, text, { W: l.width, D: l.depth, z0: floor + 1, z1: textBandTop(m, H, l.lid.plate, p.print.clearance) });
+    if (t.length) {
+      textSolid = t.length > 1 ? s.track(k.Manifold.union(t)) : t[0];
+      body = s.track(body.subtract(textSolid));
+      textSolid = s.track(textSolid.intersect(box(k, s, 0, 0, 0, l.width, l.depth, H)));
+    }
+  }
+  body = chamferBottom(k, s, body, l.width, l.depth, p);
+  return { body, text: textSolid };
 }
