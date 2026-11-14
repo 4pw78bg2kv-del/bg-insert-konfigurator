@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { areaUsage, fileNameFor, fitsBed, listHardware, listParts, maxLevel, type PlacedInstance, type ValidationMessage } from '../geometry';
+import { areaUsage, fillReport, fileNameFor, fitsBed, listHardware, listParts, maxLevel, type PlacedInstance, type ValidationMessage } from '../geometry';
 import { useStore } from '../state/store';
 import { downloadBlob, geometryClient } from '../worker/client';
 import { fmt } from './SettingsPanels';
@@ -58,6 +58,7 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
   const totalGrams = specs.reduce((s, spec) => s + (parts[spec.id]?.volume ?? 0) * spec.quantity * PLA_G_PER_MM3, 0);
   const levels = maxLevel(project);
   const usage = Array.from({ length: levels }, (_, i) => `${levels > 1 ? `Stufe ${i + 1} ` : ''}${fmt(areaUsage(project, layout, i + 1), 0)} %`).join(' · ');
+  const fill = fillReport(project, layout);
   const hardware = listHardware(project);
 
   return (
@@ -119,7 +120,7 @@ export function PartsPanel({ layout }: { layout: PlacedInstance[] }) {
         </p>
       )}
       <p className="muted small">
-        Belegte Grundfläche: {usage} · gesamt ≈ {fmt(totalGrams, 0)} g PLA (Vollmaterial-Schätzung)
+        Füllgrad {fmt(fill.fill * 100, 0)} % ({fmt((fill.total - fill.used) / 1e6, 1)} l frei) · Belegte Grundfläche: {usage} · gesamt ≈ {fmt(totalGrams, 0)} g PLA (Vollmaterial-Schätzung)
       </p>
       {error && <p className="bad small">{error}</p>}
     </div>

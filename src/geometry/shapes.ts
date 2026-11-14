@@ -288,6 +288,8 @@ export const SHAPES: readonly ShapeDef[] = [
       return [{ key: 'tail', from: [-w / 2, -h / 2], to: [-w / 2, -h / 2 + t], offset: 5 }];
     },
   },
+  // Freiform: der Umriss kommt aus `Pocket.points`; ohne Punkte ein Rechteck.
+  { id: 'custom', label: 'Freiform', params: [], outline: (w, h) => roundRectPts(w, h, 0) },
 ];
 
 export function shapeDef(kind: ShapeKind): ShapeDef {
@@ -327,8 +329,9 @@ export function shapeParams(kind: ShapeKind, w: number, h: number, given: Record
   return out;
 }
 
-/** Umriss einer Form ohne Drehung, Mittelpunkt im Ursprung. */
-export function shapeOutline(kind: ShapeKind, w: number, h: number, params: Record<string, number>): Pt[] {
+/** Umriss einer Form ohne Drehung, Mittelpunkt im Ursprung (Freiform: aus `points`). */
+export function shapeOutline(kind: ShapeKind, w: number, h: number, params: Record<string, number>, points?: readonly Pt[]): Pt[] {
+  if (kind === 'custom' && points && points.length >= 3) return dedupePts(fitTo([...points], Math.max(1, w), Math.max(1, h)));
   return dedupePts(shapeDef(kind).outline(Math.max(1, w), Math.max(1, h), shapeParams(kind, w, h, params)));
 }
 
@@ -336,7 +339,7 @@ export function shapeOutline(kind: ShapeKind, w: number, h: number, params: Reco
 export function pocketOutline(pk: Pocket, dx = 0, dy = 0): Pt[] {
   const a = (pk.rotation * Math.PI) / 180;
   const c = Math.cos(a), s = Math.sin(a);
-  return shapeOutline(pk.shape, pk.w, pk.h, pk.params).map(([x, y]) => [pk.x + dx + x * c - y * s, pk.y + dy + x * s + y * c]);
+  return shapeOutline(pk.shape, pk.w, pk.h, pk.params, pk.points).map(([x, y]) => [pk.x + dx + x * c - y * s, pk.y + dy + x * s + y * c]);
 }
 
 /** Radius der Griffmulde einer Tasche. */
@@ -424,4 +427,61 @@ function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
   const d = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
   const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
   return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+/** Kürzester Abstand eines Punkts zum Rand eines Polygons. */
+function edgeDistance([x, y]: Pt, poly: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const [x0, y0] = poly[i];
+    const [x1, y1] = poly[(i + 1) % poly.length];
+    const dx = x1 - x0, dy = y1 - y0;
+    const t = clamp(((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy || 1e-12), 0, 1);
+    best = Math.min(best, Math.hypot(x - (x0 + t * dx), y - (y0 + t * dy)));
+  }
+  return best;
+}
+
+/** Länge der Sehne durch einen Punkt in Richtung (ux, uy). */
+function chord([x, y]: Pt, poly: Pt[], ux: number, uy: number): number {
+  let lo = -Infinity, hi = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const [x0, y0] = poly[i];
+    const [x1, y1] = poly[(i + 1) % poly.length];
+    // Schnitt des Strahls p + t·u mit der Kante
+    const ex = x1 - x0, ey = y1 - y0;
+    const den = ux * ey - uy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((x0 - x) * ey - (y0 - y) * ex) / den;
+    const sEdge = ((x0 - x) * uy - (y0 - y) * ux) / den;
+    if (sEdge < 0 || sEdge > 1) continue;
+    if (t >= 0) hi = Math.min(hi, t);
+    else lo = Math.max(lo, t);
+  }
+  return Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : 0;
+}
+
+/**
+ * Platz für eine Beschriftung in einem Polygon: Punkt mit dem größten Abstand zum
+ * Rand und die Sehnenlängen waagrecht und senkrecht durch diesen Punkt.
+ */
+export function labelAnchor(poly: Pt[]): { x: number; y: number; r: number; spanX: number; spanY: number } {
+  const b = bounds(poly);
+  let best: { p: Pt; d: number } = { p: [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], d: -1 };
+  let cell = Math.max(b.x1 - b.x0, b.y1 - b.y0) / 24;
+  let cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  let half = Math.max(b.x1 - b.x0, b.y1 - b.y0) / 2;
+  for (let iter = 0; iter < 4; iter++) {
+    for (let gx = cx - half; gx <= cx + half + 1e-9; gx += cell)
+      for (let gy = cy - half; gy <= cy + half + 1e-9; gy += cell) {
+        const p: Pt = [gx, gy];
+        if (!pointInPolygon(p, poly)) continue;
+        const d = edgeDistance(p, poly);
+        if (d > best.d) best = { p, d };
+      }
+    [cx, cy] = best.p;
+    half = cell * 1.5;
+    cell /= 4;
+  }
+  return { x: best.p[0], y: best.p[1], r: Math.max(0, best.d), spanX: chord(best.p, poly, 1, 0), spanY: chord(best.p, poly, 0, 1) };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fillReport,
   assemblySvg,
   cardTrayLayout,
   createShapeBox,
@@ -340,5 +341,40 @@ describe('JSON speichern/laden', () => {
     expect(p.modules).toHaveLength(1);
     expect(() => parseProject('kein json')).toThrow();
     expect(() => parseProject('{"foo":1}')).toThrow();
+  });
+});
+
+describe('Lückenprüfung', () => {
+  const project = () => {
+    const p = createDefaultProject();
+    p.grid.enabled = false;
+    p.baseplate.enabled = false;
+    p.box = { ...p.box, innerWidth: 100, innerDepth: 50, innerHeight: 40, headroom: 0 };
+    return p;
+  };
+  const box = (x: number, w: number, h: number) =>
+    createGridBox({ width: w, depth: 49.8, heightMode: 'custom', customHeight: h, root: leaf(), placement: { mode: 'manual', x, y: 0.1, rotated: false } });
+
+  it('meldet Module mit Spielraum und den Füllgrad', () => {
+    const p = project();
+    p.modules = [box(0.1, 40, 40), box(60, 39.9, 40)];
+    const r = fillReport(p, computeLayout(p));
+    expect(r.fill).toBeCloseTo((40 + 39.9) * 49.8 * 40 / (100 * 50 * 40), 3);
+    // Zwischen den Modulen 19,9 mm Luft
+    expect(r.loose.map((l) => l.dir).sort()).toEqual(['left', 'right']);
+    expect(r.loose[0].gap).toBeCloseTo(19.9, 3);
+    expect(validateProject(p, computeLayout(p)).some((m) => m.level === 'warning' && m.text.startsWith('Lücken'))).toBe(true);
+  });
+
+  it('akzeptiert dicht gepackte Module und meldet Luft nach oben als Hinweis', () => {
+    const p = project();
+    p.modules = [box(0.1, 49.8, 40), box(50.1, 49.8, 30)];
+    const r = fillReport(p, computeLayout(p));
+    expect(r.loose).toHaveLength(1);
+    expect(r.loose[0]).toMatchObject({ dir: 'up' });
+    expect(r.loose[0].gap).toBeCloseTo(10, 5);
+    const msgs = validateProject(p, computeLayout(p));
+    expect(msgs.some((m) => m.text.startsWith('Lücken'))).toBe(false);
+    expect(msgs.some((m) => m.level === 'info' && m.text.startsWith('Luft nach oben'))).toBe(true);
   });
 });

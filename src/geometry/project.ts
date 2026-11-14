@@ -385,7 +385,8 @@ function parseCard(r: Record<string, unknown>, d: CardSpec): CardSpec {
     customCardWidth: num(r.customCardWidth, d.customCardWidth, 10, 400),
     customCardHeight: num(r.customCardHeight, d.customCardHeight, 10, 400),
     sleeve: pick(r.sleeve, ['none', 'standard', 'premium'] as const, d.sleeve),
-    cardThickness: num(r.cardThickness, d.cardThickness, 0.1, 3),
+    // Bis 50 mm: auch Schachteln (z. B. Charakterboxen) lassen sich als „Karten“ einsortieren.
+    cardThickness: num(r.cardThickness, d.cardThickness, 0.1, 50),
   };
 }
 
@@ -446,7 +447,19 @@ function parsePocket(v: unknown): Pocket {
     thickness: num(r.thickness, 2, 0.2, 50),
     grip: pick(r.grip, ['none', 'one', 'two'] as const, 'one'),
     gripAngle: num(r.gripAngle, 270, -360, 360),
+    ...(shape === 'custom' ? { points: parsePoints(r.points) } : {}),
+    ...(typeof r.label === 'string' && r.label.trim() ? { label: r.label.slice(0, 80) } : {}),
   };
+}
+
+/** Freiform-Umriss: Liste aus [x, y]-Paaren (höchstens 4000 Punkte). */
+function parsePoints(v: unknown): [number, number][] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const pts = v
+    .slice(0, 4000)
+    .filter((q): q is [number, number] => Array.isArray(q) && typeof q[0] === 'number' && typeof q[1] === 'number' && Number.isFinite(q[0]) && Number.isFinite(q[1]))
+    .map(([x, y]) => [x, y] as [number, number]);
+  return pts.length >= 3 ? pts : undefined;
 }
 
 interface Legacy {

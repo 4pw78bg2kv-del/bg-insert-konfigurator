@@ -1,24 +1,99 @@
 /**
- * Spiel-Preset „Frosthaven“ (Grundspiel, Cephalofair).
+ * Spiel-Preset „Frosthaven“ (Grundspiel, Cephalofair) – komplettes, lückenloses Insert.
  *
- * Nachgebaut nach den vorhandenen Inserts des Nutzers (Maße aus deren STLs,
- * siehe docs/frosthaven.md). Alle Module bleiben voll parametrisch.
+ * Schachtel innen 403 × 286 × 240 mm (vom Nutzer gemessen). Oben bleiben 50 mm für
+ * Regelbuch, Szenario- und Abschnittsbuch, Rätselbuch, Spielplan, Kampagnenblock und
+ * Bögen; alles andere außer den Kartenteilen liegt im Insert.
  *
- * Schachtel: außen 415 × 300 × 250 mm (Folded Space; Printables nennt 410 mm),
- * Karton ca. 2,5 mm → innen ca. 408 × 293 × 244 mm. Bitte vor dem Druck nachmessen.
+ * Aufbau (Draufsicht, vorne = unten):
  *
- * Karten: Standard 63 × 88 mm, klein 44 × 67 mm (Mini European), jeweils mit
- * Standard-Hüllen. Kartenzahlen pro Fach sind Schätzwerte und lassen sich anpassen.
+ *   ┌──────────────────────────────────────────────┬────────────────┐
+ *   │ Gegenstände I | Gegenstände II   (Mini)      │ Bosse          │
+ *   ├──────────┬──────────┬────────┬───────────────┤ Miniaturen B   │
+ *   │ Ereign.  │ Ereign.  │Kampagne│ Ziele         ├────────────────┤
+ *   │ Sommer   │ Winter   │ (Mini) │ (Mini)        │ Monster 12–22  │
+ *   ├──────────┴──────────┴────────┴───────────────┼────────────────┤
+ *   │ 17 Charakterboxen, hochkant                  │ Monster 1–11   │
+ *   └──────────────────────────────────────────────┴────────────────┘
+ *   darunter (links): zwei Schalen für die Gebietsaufleger
+ *   darüber: Miniaturen A + Marker auf den Ereignissen, Kartendecks auf Kampagne/Ziele,
+ *   Standfüße + Stadtwache auf den Gegenständen
+ *
+ * Alle Positionen werden aus den tatsächlichen Modulmaßen berechnet; jede Lücke ist
+ * höchstens 3 mm groß, und jeder Stapel endet genau unter dem Kopfraum.
  */
+import { moduleSizeWith } from '../dimensions';
 import { createCardTray, createGridBox, createPocket, createShapeBox, defaultLabel, leaf, split } from '../project';
 import { DEFAULT_GRID, DEFAULT_LABELS, DEFAULT_PRINT, newId } from '../project';
-import { PROJECT_FORMAT_VERSION, type CardTrayModule, type CellContent, type InsertModule, type Project } from '../types';
+import {
+  PROJECT_FORMAT_VERSION,
+  type CardSpec,
+  type CardTrayModule,
+  type CellContent,
+  type CellNode,
+  type GridBoxModule,
+  type InsertModule,
+  type Project,
+} from '../types';
+import { OVERLAYS_1, OVERLAYS_2, parseOutline, type OverlayPocket } from './frosthavenOverlays';
 
-const scoop = (): CellContent => ({ type: 'scoop', sides: 'front' });
+// ---------------------------------------------------------------------------
+// Schachtel und Raster
+
+const BOX = { innerWidth: 403, innerDepth: 286, innerHeight: 240, wallThickness: 2.5, floorThickness: 2.5, headroom: 50 };
+const PRINT = { ...DEFAULT_PRINT, printer: 'bambu-h2d', bedX: 325, bedY: 320, bedZ: 325 };
+/** Spaltmaß zwischen Modulen und Abstand zur Schachtelwand. */
+const GAP = PRINT.clearance;
+const EDGE = GAP / 2;
+/**
+ * Schrift 0,6 mm tief: Die Namen vorne an den Monsterboxen brauchen so keine dickere
+ * Wand (der Innenraum bleibt 104 mm für die Wertekarte), und die Beschriftungen in den
+ * Taschenböden der Aufleger-Schalen lassen genug Boden stehen.
+ */
+const LABELS = { ...DEFAULT_LABELS, font: 'serif' as const, depth: 0.6 };
+/** Nutzbare Höhe unter dem Kopfraum. */
+const TOP = BOX.innerHeight - BOX.headroom;
+
+/** Höhe der Aufleger-Schalen wie im Original. */
+const OVERLAY_H = 15;
+/** Monsterbox: Innenraum für die quadratische Wertekarte (103 × 103 mm) plus Spiel. */
+const MONSTER_INNER = 104;
+const MONSTER = MONSTER_INNER + 2 * PRINT.wallThickness;
+/** Zwei Monstertürme mit je 11 Boxen. */
+const MONSTERS_PER_STACK = 11;
+/** Charakterbox (groß) und Miniaturen-Schachteln laut Nutzer. */
+const CHAR_BOX = { w: 122, h: 153, t: 17, count: 17 };
+const MINI_H = 55;
+
+// ---------------------------------------------------------------------------
+// Hilfen
+
+const sizing: Project = {
+  formatVersion: PROJECT_FORMAT_VERSION,
+  name: 'sizing',
+  box: BOX,
+  print: PRINT,
+  grid: { ...DEFAULT_GRID, enabled: false },
+  baseplate: { enabled: false },
+  labels: LABELS,
+  modules: [],
+};
+
+/** Außenmaße (unrotiert) bei voller verfügbarer Höhe. */
+const sizeOf = (m: InsertModule) => moduleSizeWith(m, sizing, TOP);
 
 const at = (x: number, y: number, rotated = false) => ({ mode: 'manual' as const, x, y, rotated });
+const noLabel = <T extends InsertModule['type']>(type: T) => ({ ...defaultLabel(type), sides: 'none' as const, onLid: false });
+const scoop = (): CellContent => ({ type: 'scoop', sides: 'front' });
 
-/** Hängetrenner wie in den Original-Inserts: Kopfleiste 14 mm, Griffschlitz, Schrift rechts. */
+/** Kleine Karten mit Standard-Hülle (44 × 68 → 46,5 × 71,5 mm). */
+const MINI: CardSpec = { cardPreset: 'miniEuropean', customCardWidth: 44, customCardHeight: 68, sleeve: 'standard', cardThickness: 0.32 };
+/** Standardkarten mit Standard-Hülle (63,5 × 88 → 66 × 91,5 mm). */
+const STANDARD: CardSpec = { cardPreset: 'poker', customCardWidth: 63.5, customCardHeight: 88, sleeve: 'standard', cardThickness: 0.32 };
+
+const deck = (count: number, spec: CardSpec = MINI): CellContent => ({ type: 'cards', orientation: 'standing', format: 'portrait', count, raise: false, ...spec });
+
+/** Hängetrenner wie in den Original-Inserts: Kopfleiste, Griffschlitz, Schrift auf dem Trenner. */
 const hanging: Partial<CardTrayModule> = {
   orientation: 'standing',
   tilt: 0,
@@ -28,97 +103,131 @@ const hanging: Partial<CardTrayModule> = {
   tabStyle: 'header',
   tabHeight: 14,
   dividerPlateThickness: 1.2,
-  sleeve: 'standard',
-  cardThickness: 0.32,
   fingerCutout: 'none',
   heightMode: 'auto',
-  label: { ...defaultLabel('cardTray'), sides: 'none' },
+  label: noLabel('cardTray'),
 };
 
 /**
- * Taschen der Gebietsaufleger-Box (Mitte x/y, Breite, Tiefe, Drehung) – vermessen aus
- * „Gebietsaufleger vollständige Version 1“ (umschreibende Rechtecke der Original-Taschen;
- * drei Taschen leicht verkleinert, damit Stege bleiben). Taschen am Rand werden von
- * `insideBox` auf die Außenwand gekürzt.
+ * Kartenfach, dessen Länge (Stapelrichtung) möglichst genau `length` erreicht: Die
+ * Kartenzahl ist die Kapazität des Fachs (der Rest bleibt Platz für Nachschub).
  */
-const OVERLAY_POCKETS: [number, number, number, number, number][] = [
-  [28.6, 19.3, 36, 34, 0], [74.2, 20.1, 38, 39, 0], [118.3, 19.2, 26, 36, 0], [180.4, 21.1, 64, 38, 0], [249.1, 22.0, 69, 33, 0],
-  [22.3, 68.9, 41, 31, 0], [72.5, 89.7, 36, 74, 0], [115.8, 91.3, 35, 71, 0], [180.5, 91.4, 64, 80, 0], [249.1, 68.0, 69, 33, 0],
-  [21.0, 110.1, 37, 35, 0], [249.5, 113.9, 69, 37, 0], [34.7, 157.0, 67, 25, 0], [119.2, 174.6, 30, 60, 0], [209.9, 162.1, 40, 32, 0],
-  [262.7, 162.3, 43, 38, 0], [34.2, 205.1, 66, 25, 0], [190.2, 206.2, 85, 38, 0], [262.7, 206.3, 43, 38, 0], [38.2, 253.5, 74, 30, 0],
-  [94.0, 242.0, 27, 64, 0], [166.8, 252.9, 37, 43, 0], [213.7, 252.8, 38, 43, 0], [262.8, 250.0, 43, 40, 0],
-];
+function trayToLength(base: Partial<CardTrayModule>, length: number): CardTrayModule {
+  let lo = 0;
+  let hi = 2000;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (sizeOf(createCardTray({ ...base, totalCards: mid })).depth <= length + 1e-6) lo = mid;
+    else hi = mid - 1;
+  }
+  return createCardTray({ ...base, totalCards: lo });
+}
 
-/** Kürzt achsparallele Taschen so, dass rundum mindestens `margin` Wand bleibt. */
-function insideBox(pockets: [number, number, number, number, number][], W: number, D: number, margin: number) {
-  return pockets.map(([x, y, w, h, r]) => {
-    const x0 = Math.max(margin, x - w / 2);
-    const x1 = Math.min(W - margin, x + w / 2);
-    const y0 = Math.max(margin, y - h / 2);
-    const y1 = Math.min(D - margin, y + h / 2);
-    return [(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, r] as const;
+/** Fächer für hochkant stehende Schachteln (Miniaturen): Spalten von links nach rechts, je Spalte Fächer von vorne nach hinten. */
+function boxGrid(columns: number[]): CellNode {
+  return split(
+    'x',
+    columns.map((n) => (n <= 1 ? leaf() : split('y', Array.from({ length: n }, () => leaf())))),
+  );
+}
+
+function overlayTray(name: string, pockets: readonly OverlayPocket[], level: number, width: number, depth: number): InsertModule {
+  // Taschen mittig in die (größere) Schale setzen
+  const dx = (width - 285) / 2;
+  const dy = (depth - 275) / 2;
+  return createShapeBox({
+    name,
+    sizeMode: 'manual',
+    width,
+    depth,
+    heightMode: 'custom',
+    customHeight: OVERLAY_H,
+    floorHole: false,
+    pocketPlay: 0.2,
+    level,
+    placement: at(EDGE, EDGE),
+    label: noLabel('shapeBox'),
+    pockets: pockets.map(([x, y, label, outline]) => {
+      const points = parseOutline(outline);
+      const xs = points.map((q) => q[0]);
+      const ys = points.map((q) => q[1]);
+      const w = Math.max(...xs) - Math.min(...xs);
+      const h = Math.max(...ys) - Math.min(...ys);
+      // 6 Aufleger à 2,2 mm → 13,6 mm tief wie die Originale (13,8 mm)
+      return createPocket('custom', w, h, {}, { x: x + dx, y: y + dy, count: 6, thickness: 2.2, grip: 'none', points, label });
+    }),
   });
 }
 
-function monsterBox(name: string, height: number, x: number, y: number, level: number): InsertModule {
+function monsterBox(name: string, level: number, x: number, y: number, top: boolean): GridBoxModule {
   return createGridBox({
-    name: `Monsterbox ${name}`,
-    width: 107,
-    depth: 104,
+    name,
     sizeMode: 'manual',
-    root: leaf(),
-    heightMode: 'custom',
-    customHeight: height,
+    width: MONSTER,
+    depth: MONSTER,
+    // Zwei Monsterarten je Box: Aufsteller liegend in zwei Fächern, darüber die
+    // Fähigkeitskarten und obenauf die Wertekarten (die Trennwand ist abgesenkt).
+    root: split('x', [leaf(), leaf()]),
+    dividerLowering: 5,
+    heightMode: top ? 'fill' : 'custom',
+    customHeight: Math.floor((TOP / MONSTERS_PER_STACK) * 10) / 10,
     fingerCutout: 'notch',
     fingerSides: 'leftRight',
     level,
     placement: at(x, y),
-    label: { ...defaultLabel('gridBox'), text: name, sides: 'front', onLid: false },
+    label: { ...defaultLabel('gridBox'), sides: 'front', onLid: false },
   });
 }
 
-export function frosthavenModules(): InsertModule[] {
-  return [
-    // --- Unterste Lage: Gebietsaufleger und Monsterboxen -------------------
-    createShapeBox({
-      name: 'Gebietsaufleger',
-      sizeMode: 'manual',
-      width: 285,
-      depth: 275,
-      heightMode: 'custom',
-      customHeight: 15,
-      floorHole: true,
-      pocketPlay: 0.3,
-      pockets: insideBox(OVERLAY_POCKETS, 285, 275, 2.6).map(([x, y, w, h, rotation]) => createPocket('rect', w, h, {}, { x, y, rotation, count: 6, thickness: 2.2, grip: 'none' })),
-      placement: at(0, 0),
-      label: { ...defaultLabel('shapeBox'), sides: 'none' },
-    }),
-    monsterBox('Wache', 14.1, 288, 0, 1),
-    monsterBox('Priester', 14.1, 288, 105, 1),
-    monsterBox('Späher', 18.4, 288, 0, 2),
-    monsterBox('Wicht', 18.4, 288, 105, 2),
-    createCardTray({
-      name: 'Stadtwachen Angriffsdeck',
-      ...hanging,
-      cardPreset: 'miniEuropean',
-      format: 'portrait',
-      tab: false,
-      totalCards: 20,
-      dividerCount: 0,
-      play: 2,
-      fingerCutout: 'toFloor',
-      floorHole: true,
-      placement: at(288, 212),
-    }),
+// ---------------------------------------------------------------------------
 
-    // --- Zweite Lage auf den Gebietsauflegern --------------------------------
-    createCardTray({
+export function frosthavenModules(): InsertModule[] {
+  const mods: InsertModule[] = [];
+
+  // --- Charakterboxen: 17 Schachteln hochkant, Breitseite nach vorne -------
+  const chars = createCardTray({
+    name: 'Charakterboxen',
+    cardPreset: 'custom',
+    customCardWidth: CHAR_BOX.w,
+    customCardHeight: CHAR_BOX.h,
+    sleeve: 'none',
+    cardThickness: CHAR_BOX.t,
+    orientation: 'standing',
+    format: 'portrait',
+    tilt: 0,
+    rows: 1,
+    dividerMode: 'loose',
+    dividerCount: 0,
+    tab: false,
+    totalCards: CHAR_BOX.count,
+    play: 1.6,
+    heightMode: 'fill',
+    fingerCutout: 'notch',
+    label: noLabel('cardTray'),
+    level: 3,
+    placement: at(EDGE, EDGE, true),
+  });
+  const charSize = sizeOf(chars);
+  const leftW = charSize.depth; // gedreht: Länge des Halters = Breite des linken Bereichs
+  const bandA = charSize.width;
+  const rightX = EDGE + leftW + GAP;
+
+  // --- Unterste Lage links: die beiden Aufleger-Schalen --------------------
+  const overlayDepth = BOX.innerDepth - 2 * EDGE;
+  mods.push(overlayTray('Gebietsaufleger 1', OVERLAYS_1, 1, leftW, overlayDepth));
+  mods.push(overlayTray('Gebietsaufleger 2', OVERLAYS_2, 2, leftW, overlayDepth));
+  mods.push(chars);
+
+  // --- Mittleres Band: Ereignisse, Gebäude, Kampagne, Ziele ----------------
+  const yB = EDGE + bandA + GAP;
+  const bandB = MONSTER;
+  const summer = trayToLength(
+    {
       name: 'Ereignisse Sommer und Boot',
       ...hanging,
-      cardPreset: 'poker',
+      ...STANDARD,
       format: 'landscape',
       play: 1,
-      totalCards: 140,
       dividerLabels: [
         'Aktive Sommer Weg-Ereignisse',
         'Inaktive Sommer Weg-Ereignisse',
@@ -127,16 +236,17 @@ export function frosthavenModules(): InsertModule[] {
         'Aktive Boot-Ereignisse',
         'Inaktive Boot-Ereignisse',
       ],
-      level: 2,
-      placement: at(0, 0),
-    }),
-    createCardTray({
+      level: 3,
+    },
+    bandB,
+  );
+  const winter = trayToLength(
+    {
       name: 'Ereignisse Winter und Gebäude',
       ...hanging,
-      cardPreset: 'poker',
+      ...STANDARD,
       format: 'landscape',
       play: 1,
-      totalCards: 140,
       dividerLabels: [
         'Aktive Winter Weg-Ereignisse',
         'Inaktive Winter Weg-Ereignisse',
@@ -145,83 +255,197 @@ export function frosthavenModules(): InsertModule[] {
         'Aktive Gebäude',
         'Inaktive Gebäude',
       ],
-      level: 2,
-      placement: at(96, 0),
-    }),
-    createCardTray({
-      name: 'Gegenstände',
-      ...hanging,
-      cardPreset: 'miniEuropean',
-      format: 'portrait',
-      play: 2,
-      totalCards: 250,
-      dividerLabels: [
-        'Verfügbar kaufbar',
-        'Gesperrt kaufbar',
-        'Verfügbar herstellbar',
-        'Gesperrt herstellbar',
-        'Verfügbare Pläne',
-        'Gesperrte Pläne',
-        'Zufälliger Gegenstand',
-        'Solo-Gegenstand',
-      ],
-      level: 2,
-      placement: at(192, 0),
-    }),
-    createCardTray({
-      name: 'Szenarien und Tiere',
-      ...hanging,
-      cardPreset: 'miniEuropean',
-      format: 'portrait',
-      play: 2,
-      totalCards: 120,
+      level: 3,
+    },
+    bandB,
+  );
+  // Kleine Karten: Kopfleiste 13,5 mm, damit die Kartendecks darüber genau bis unter den Kopfraum reichen.
+  const miniTray: Partial<CardTrayModule> = { ...hanging, ...MINI, format: 'portrait', play: 1.2, tabHeight: 13.5, level: 3 };
+  const campaign = trayToLength(
+    {
+      name: 'Kampagne Szenarien und Tiere',
+      ...miniTray,
       dividerLabels: ['Offen', 'Aktiv', 'Inaktiv', 'Abgeschlossen', 'Zufälliges Szenario', 'Verfügbare Tiere', 'Gesperrte Tiere'],
-      level: 1,
-      placement: at(341, 212),
-    }),
-    createCardTray({
-      name: 'Bosse',
-      ...hanging,
-      cardPreset: 'custom',
-      customCardWidth: 100,
-      customCardHeight: 88,
-      sleeve: 'none',
-      cardThickness: 1.2,
-      format: 'portrait',
-      play: 2.5,
-      totalCards: 30,
-      dividerLabels: ['Unbesiegte Bosse Aufsteller', 'Unbesiegte Bosse Wertekarten', 'Besiegte Bosse Aufsteller', 'Besiegte Bosse Wertekarten'],
-      level: 2,
-      placement: at(0, 76),
+    },
+    bandB,
+  );
+  const goals = trayToLength(
+    {
+      name: 'Ziele und Herausforderungen',
+      ...miniTray,
+      dividerLabels: ['Kampfziele', 'Persönliche Ziele', 'Herausforderungen', 'Zufällige Räume', 'Zufällige Aufbauten'],
+    },
+    bandB,
+  );
+  let x = EDGE;
+  for (const t of [summer, winter, campaign, goals]) {
+    t.placement = at(x, yB);
+    x += sizeOf(t).width + GAP;
+    mods.push(t);
+  }
+  const eventsW = sizeOf(summer).width + GAP + sizeOf(winter).width;
+  const xMini = EDGE + eventsW + GAP;
+  const miniW = leftW - eventsW - GAP;
+
+  // --- Hinteres Band: Gegenstände (zwei lange Fächer, quer) -----------------
+  const yC = yB + bandB + GAP;
+  const bandC = sizeOf(campaign).width;
+  const itemLen = (leftW - GAP) / 2;
+  const items1 = trayToLength(
+    {
+      name: 'Gegenstände kaufen und herstellen',
+      ...miniTray,
+      dividerLabels: ['Verfügbar kaufbar', 'Gesperrt kaufbar', 'Verfügbar herstellbar', 'Gesperrt herstellbar'],
+    },
+    itemLen,
+  );
+  const items2 = trayToLength(
+    {
+      name: 'Gegenstände Pläne',
+      ...miniTray,
+      dividerLabels: ['Verfügbare Pläne', 'Gesperrte Pläne', 'Zufälliger Gegenstand', 'Solo-Gegenstände'],
+    },
+    itemLen,
+  );
+  items1.placement = at(EDGE, yC, true);
+  items2.placement = at(EDGE + sizeOf(items1).depth + GAP, yC, true);
+  mods.push(items1, items2);
+
+  // --- Obere Lage links ------------------------------------------------------
+  // Miniaturen A auf den Ereignissen: 2 Spalten für Viererboxen (51 × 29), 4 Spalten für Einzelboxen (30 × 29)
+  mods.push(
+    createGridBox({
+      name: 'Miniaturen A',
+      sizeMode: 'manual',
+      width: eventsW,
+      depth: bandB,
+      root: boxGrid([2, 2, 3, 3, 3, 3]),
+      heightMode: 'custom',
+      customHeight: PRINT.floorThickness + MINI_H,
+      fingerCutout: 'none',
+      level: 4,
+      placement: at(EDGE, yB),
+      label: noLabel('gridBox'),
     }),
     createGridBox({
-      name: 'Schadensmarker Elementmarker Beute',
+      name: 'Marker',
       sizeMode: 'manual',
-      width: 152,
-      depth: 136.4,
-      heightMode: 'custom',
-      customHeight: 24.2,
-      root: split('x', [
-        split('y', [split('x', [leaf(scoop()), leaf(scoop()), leaf(scoop())]), split('x', [leaf(scoop()), leaf(scoop()), leaf(scoop())])], 94, 'mm'),
-        split('y', [leaf(undefined, 1.4), leaf(scoop())]),
-      ]),
-      level: 2,
-      placement: at(108, 129),
-      label: { ...defaultLabel('gridBox'), text: 'Marker', sides: 'none' },
+      width: eventsW,
+      depth: bandB,
+      root: split('y', [split('x', [leaf(scoop()), leaf(scoop()), leaf(scoop()), leaf(scoop())]), split('x', [leaf(scoop()), leaf(scoop()), leaf(scoop()), leaf(scoop())])]),
+      heightMode: 'fill',
+      fingerCutout: 'none',
+      level: 5,
+      placement: at(EDGE, yB),
+      label: noLabel('gridBox'),
     }),
-  ];
+  );
+  // Kartendecks auf Kampagne und Zielen: Angriffsmodifikatoren und Beute, je Deck ein Fach
+  mods.push(
+    createGridBox({
+      name: 'Kartendecks',
+      sizeMode: 'manual',
+      width: miniW,
+      depth: bandB,
+      root: split('x', [
+        split('y', [leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto')], 1, 'auto'),
+        split('y', [leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto'), leaf(deck(20), 1, 'auto'), leaf(deck(59), 1, 'auto')], 1, 'auto'),
+      ]),
+      // Trennwände niedriger als die Karten: Decks lassen sich seitlich greifen
+      dividerLowering: 28,
+      heightMode: 'fill',
+      fingerCutout: 'none',
+      level: 4,
+      placement: at(xMini, yB),
+      label: noLabel('gridBox'),
+    }),
+  );
+  // Standfüße und Stadtwachen-Deck auf den Gegenständen (quer)
+  mods.push(
+    createGridBox({
+      name: 'Standfüße und Stadtwache',
+      sizeMode: 'manual',
+      width: bandC,
+      depth: leftW,
+      root: split('y', [leaf(deck(55), 30, 'mm'), leaf(scoop()), leaf(scoop()), leaf(scoop()), leaf(scoop())]),
+      dividerLowering: 20,
+      heightMode: 'fill',
+      fingerCutout: 'none',
+      level: 4,
+      placement: at(EDGE, yC, true),
+      label: noLabel('gridBox'),
+    }),
+  );
+
+  // --- Rechte Spalte: zwei Monstertürme, Bosse, Miniaturen B ---------------
+  let n = 1;
+  for (let stack = 0; stack < 2; stack++) {
+    const y = EDGE + stack * (MONSTER + GAP);
+    for (let i = 0; i < MONSTERS_PER_STACK; i++) {
+      mods.push(monsterBox(`Monster ${String(n).padStart(2, '0')}`, i + 1, rightX, y, i === MONSTERS_PER_STACK - 1));
+      n++;
+    }
+  }
+  const ySlot = EDGE + 2 * (MONSTER + GAP);
+  const slotDepth = BOX.innerDepth - EDGE - ySlot;
+  mods.push(
+    trayToLength(
+      {
+        name: 'Bosse',
+        ...hanging,
+        cardPreset: 'custom',
+        customCardWidth: 100,
+        customCardHeight: 88,
+        sleeve: 'none',
+        cardThickness: 1,
+        format: 'portrait',
+        // Trennerkörper 102,4 mm breit wie die Original-Trenner
+        play: 2.8,
+        dividerLabels: ['Unbesiegte Bosse Aufsteller', 'Unbesiegte Bosse Wertekarten', 'Besiegte Bosse Aufsteller', 'Besiegte Bosse Wertekarten'],
+        level: 1,
+        placement: at(rightX, ySlot),
+      },
+      slotDepth,
+    ),
+    createGridBox({
+      name: 'Miniaturen B',
+      sizeMode: 'manual',
+      width: MONSTER,
+      depth: slotDepth,
+      root: split('y', [split('x', [leaf(), leaf(), leaf()]), split('x', [leaf(), leaf(), leaf()])]),
+      heightMode: 'custom',
+      customHeight: PRINT.floorThickness + MINI_H,
+      fingerCutout: 'none',
+      level: 2,
+      placement: at(rightX, ySlot),
+      label: noLabel('gridBox'),
+    }),
+    createGridBox({
+      name: 'Elemente und Szenario-Marker',
+      sizeMode: 'manual',
+      width: MONSTER,
+      depth: slotDepth,
+      root: split('y', [split('x', [leaf(scoop()), leaf(scoop())]), split('x', [leaf(scoop()), leaf(scoop())])]),
+      heightMode: 'fill',
+      fingerCutout: 'none',
+      level: 3,
+      placement: at(rightX, ySlot),
+      label: noLabel('gridBox'),
+    }),
+  );
+  return mods;
 }
 
 export function createFrosthavenProject(): Project {
   return {
     formatVersion: PROJECT_FORMAT_VERSION,
     name: 'Frosthaven',
-    box: { innerWidth: 408, innerDepth: 293, innerHeight: 244, wallThickness: 2.5, floorThickness: 2.5, headroom: 35 },
-    // Die Gebietsaufleger-Box (285 × 275 mm) braucht ein großes Druckbett wie im Original.
-    print: { ...DEFAULT_PRINT, printer: 'bambu-h2d', bedX: 325, bedY: 320, bedZ: 325 },
+    box: { ...BOX },
+    // Gebietsaufleger-Schalen und Charakterbox-Halter brauchen ein großes Druckbett (≈ 294 × 286 mm).
+    print: { ...PRINT },
     grid: { ...DEFAULT_GRID, enabled: false },
     baseplate: { enabled: false },
-    labels: { ...DEFAULT_LABELS, font: 'serif' },
+    labels: { ...LABELS },
     modules: frosthavenModules().map((m) => ({ ...m, id: newId() })),
   };
 }

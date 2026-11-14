@@ -7,6 +7,7 @@ import { cardTrayLayout, gridBoxLayout, moduleSize, shapeBoxLayout } from './lay
 import { dividerLabelList, hasBodyLabel, hasLid, labelText } from './parts';
 import { BED_MARGIN, fitsBed } from './printers';
 import { polygonDistance } from './shapes';
+import { DIRECTION_LABEL, fillReport } from './fill';
 import { fitTextHeight, fontLoaded } from './text';
 import type { InsertModule, PlacedInstance, Project, ValidationMessage } from './types';
 
@@ -205,6 +206,28 @@ export function validateProject(project: Project, layout: PlacedInstance[]): Val
         const nb = byId.get(b.moduleId)?.name ?? '?';
         msgs.push({ level: 'error', moduleId: b.moduleId, text: `Kollision: ${na} überschneidet sich mit ${nb}.` });
       }
+    }
+  }
+
+  // Spielraum: Module, die beim Transport rutschen oder springen können
+  if (layout.length > 0) {
+    const rep = fillReport(project, layout);
+    const side = rep.loose.filter((l) => l.dir !== 'up');
+    const up = rep.loose.filter((l) => l.dir === 'up');
+    const list = (items: typeof rep.loose) =>
+      items
+        .slice(0, 6)
+        .map((l) => `${byId.get(l.instance.moduleId)?.name ?? '?'} (${f(l.gap)} mm ${DIRECTION_LABEL[l.dir]})`)
+        .join(', ') + (items.length > 6 ? ` und ${items.length - 6} weitere` : '');
+    if (side.length) {
+      msgs.push({
+        level: 'warning',
+        moduleId: side[0].instance.moduleId,
+        text: `Lücken: ${side.length === 1 ? 'Ein Modul kann' : `${side.length} Module können`} verrutschen – ${list(side)}. Tipp: Module vergrößern, Füllstück einsetzen oder „bis Deckel“.`,
+      });
+    }
+    if (up.length) {
+      msgs.push({ level: 'info', moduleId: up[0].instance.moduleId, text: `Luft nach oben: ${list(up)}. Ohne Auflage darüber können diese Module springen.` });
     }
   }
 

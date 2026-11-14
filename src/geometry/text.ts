@@ -73,6 +73,8 @@ function glyphContours(g: Glyph, scale: number, ox: number, oy: number): Pt[][] 
   let x = 0;
   let y = 0;
   const P = (a: number, b: number): Pt => [ox + a * scale, oy + b * scale];
+  // Kurven in Stücke von etwa 0,4 mm zerlegen (kleine Schrift braucht weniger Punkte)
+  const steps = (len: number, max: number) => Math.max(2, Math.min(max, Math.ceil((len * scale) / 0.4)));
   for (let i = 0; i < t.length; ) {
     const cmd = t[i++];
     if (cmd === 'm') {
@@ -86,8 +88,9 @@ function glyphContours(g: Glyph, scale: number, ox: number, oy: number): Pt[][] 
       cur.push(P(x, y));
     } else if (cmd === 'q') {
       const ex = +t[i++], ey = +t[i++], cx = +t[i++], cy = +t[i++];
-      for (let s = 1; s <= 6; s++) {
-        const u = s / 6;
+      const n = steps(Math.hypot(cx - x, cy - y) + Math.hypot(ex - cx, ey - cy), 6);
+      for (let s = 1; s <= n; s++) {
+        const u = s / n;
         const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
         cur.push(P(a * x + b * cx + c * ex, a * y + b * cy + c * ey));
       }
@@ -95,8 +98,9 @@ function glyphContours(g: Glyph, scale: number, ox: number, oy: number): Pt[][] 
       y = ey;
     } else if (cmd === 'b') {
       const ex = +t[i++], ey = +t[i++], c1x = +t[i++], c1y = +t[i++], c2x = +t[i++], c2y = +t[i++];
-      for (let s = 1; s <= 8; s++) {
-        const u = s / 8;
+      const n = steps(Math.hypot(c1x - x, c1y - y) + Math.hypot(c2x - c1x, c2y - c1y) + Math.hypot(ex - c2x, ey - c2y), 8);
+      for (let s = 1; s <= n; s++) {
+        const u = s / n;
         const a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
         cur.push(P(a * x + b * c1x + c * c2x + d * ex, a * y + b * c1y + c * c2y + d * ey));
       }
