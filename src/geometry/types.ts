@@ -170,6 +170,7 @@ interface ModuleBase {
 }
 
 export type DividerMode = 'fixed' | 'loose' | 'toothed';
+export type TabStyle = 'tab' | 'header';
 
 export interface CardTrayModule extends ModuleBase, CardSpec {
   type: 'cardTray';
@@ -199,7 +200,13 @@ export interface CardTrayModule extends ModuleBase, CardSpec {
   dividerPlateThickness: number;
   /** Beschriftungslasche an den separaten Trennern. */
   tab: boolean;
-  /** Überstand der Lasche über die Karten. */
+  /**
+   * `tab` = schmale Lasche über den Karten;
+   * `header` = Hängetrenner: durchgehende Kopfleiste, die auf den Fachwänden
+   * aufliegt, mit Griffschlitz in der Mitte (nur senkrechte Fächer).
+   */
+  tabStyle: TabStyle;
+  /** Überstand der Lasche über die Karten (bei Hängetrennern: Höhe der Kopfleiste). */
   tabHeight: number;
   /** Breite der Lasche in Prozent der Trennerbreite. */
   tabWidthPercent: number;

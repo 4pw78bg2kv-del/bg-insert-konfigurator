@@ -2,7 +2,7 @@
  * Plausibilitätsprüfung: Kollisionen, Überstände, Druckbett, Deckel,
  * Fächer, Taschen und Beschriftung.
  */
-import { LID_LIP_DEPTH, cardFace, gridInfo, labelSides, leafRequirement, pocketDepth, usableHeight } from './dimensions';
+import { LID_LIP_DEPTH, cardFace, gridInfo, hangingDividers, labelSides, leafRequirement, pocketDepth, usableHeight } from './dimensions';
 import { cardTrayLayout, gridBoxLayout, moduleSize, shapeBoxLayout } from './layout';
 import { dividerLabelList, hasBodyLabel, hasLid, labelText } from './parts';
 import { BED_MARGIN, fitsBed } from './printers';
@@ -76,6 +76,12 @@ export function validateProject(project: Project, layout: PlacedInstance[]): Val
       if (dividerLabelList(m).length > 0 && !m.tab) {
         msgs.push({ level: 'warning', moduleId: m.id, text: `${name}: Für beschriftete Trenner die Lasche einschalten – sonst verdecken die Karten die Schrift.` });
       }
+      if (m.tab && m.tabStyle === 'header' && m.orientation === 'standing' && m.dividerMode !== 'fixed' && m.tilt > 0) {
+        msgs.push({ level: 'info', moduleId: m.id, text: `${name}: Hängetrenner gibt es nur bei senkrechten Fächern – bei Neigung wird die normale Lasche verwendet.` });
+      }
+      if (m.lid !== 'none' && hangingDividers(m)) {
+        msgs.push({ level: 'info', moduleId: m.id, text: `${name}: Die Kopfleisten der Hängetrenner ragen über die Wände – das Fach bekommt keinen Deckel.` });
+      }
       if (m.lid !== 'none' && m.orientation === 'standing' && m.tilt > 0) {
         msgs.push({ level: 'info', moduleId: m.id, text: `${name}: Schräge Kartenfächer bekommen keinen Deckel.` });
       }
@@ -148,7 +154,7 @@ export function validateProject(project: Project, layout: PlacedInstance[]): Val
         const band = lh.body * 0.55;
         const h = fitTextHeight(labelText(m), project.labels.font, len * 0.86, band, m.label.size);
         if (h < 4) msgs.push({ level: 'warning', moduleId: m.id, text: `${name}: Seitenschrift wird nur ${f(h)} mm hoch – kürzerer Text oder höhere Box druckt sauberer.` });
-        if (m.fingerCutout !== 'none' && (s.front || s.back)) msgs.push({ level: 'info', moduleId: m.id, text: `${name}: Griffmulden können die Beschriftung vorne/hinten unterbrechen.` });
+        if (m.fingerCutout !== 'none' && (s.front || s.back) && !(m.type === 'gridBox' && m.fingerSides === 'leftRight')) msgs.push({ level: 'info', moduleId: m.id, text: `${name}: Griffmulden können die Beschriftung vorne/hinten unterbrechen.` });
       }
     }
 

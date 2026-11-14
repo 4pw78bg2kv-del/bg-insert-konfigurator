@@ -18,6 +18,7 @@ geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
 - **Kartenfach:** 7 Presets oder eigene Maße, Sleeves-Kalkulator, stehend oder liegend, Hoch-/Querformat, senkrecht oder schräg,
   1- oder 2-reihig, feste Fächer oder Trenner (glatt oder mit Zacken), Laschen auch versetzt.
   **Einzeln beschriftete Trenner** (erhabene Schrift), Liste per Hand oder aus CSV/Excel (erste Spalte).
+  **Hängetrenner:** durchgehende Kopfleiste, die auf den Fachwänden aufliegt, mit Griffschlitz; lange Beschriftungen zweizeilig.
 - **Fächerbox mit visuellem Editor:** Fächer anklicken, nebeneinander/hintereinander teilen, verbinden, Größe als Anteil, in mm
   oder passend zum Inhalt. Inhalt je Fach: leer, Token-Mulde (gerundet) oder Karten liegend/stehend, z. B. 2 Standardkarten
   liegend + 2 Minikarten stehend + 2 Token-Mulden in einer Box.
@@ -29,6 +30,8 @@ geprüft wasserdichtem STL-Export. Läuft komplett im Browser, ohne Server.
   Die Schrift wird zusätzlich als eigenes Teil exportiert, um sie im Slicer in einer anderen Farbe zu drucken.
 - **Vorlagen-Galerie:** 14 fertige Module (Nachziehstapel, Kombi-Box, Spieler-Box, Sortierkasten mit Magnetdeckel,
   Kartenbox mit Schiebedeckel, Würfelschale, Stiftehalter, Münzen, Sechsecke, Sonderformen …).
+- **Spiel-Presets:** komplette Inserts zum Laden, derzeit **Frosthaven** (nach vermessenen Original-Inserts,
+  siehe [docs/frosthaven.md](docs/frosthaven.md)).
 - **Insert aus Teileliste:** Excel-/CSV-Vorlage herunterladen, Teile mit Kategorie, Bauteilart und Anzahl eintragen, wieder
   hochladen; daraus entstehen Kartenfächer, Aufleger-Boxen und Fächerboxen, die bei Platzmangel automatisch gestapelt werden.
 - **Rasterbogen A4:** Raster mit Lineal und 100-mm-Prüfstrecke zum Auslegen der Teile sowie alle Kartenformate in Originalgröße
@@ -80,6 +83,7 @@ src/
     shapes.ts      Formen der Aufleger-Box (Umrisse, Maßlinien)
     text.ts        Schriften (typeface.json, Latin-1) → Umrisse
     templates.ts   Vorlagen-Galerie
+    games/         Spiel-Presets (komplette Projekte, z. B. frosthaven.ts)
     inventory.ts   Teileliste: Vorlage (XLSX/CSV), Import, automatisches Insert
     assembly.ts    Einräumanleitung und Explosionszeichnung (SVG)
     sheets.ts      Rasterbogen A4 und Kartenformate 1:1
