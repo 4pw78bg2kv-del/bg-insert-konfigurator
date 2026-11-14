@@ -183,10 +183,18 @@ export interface LidInfo {
   innerReserve: number;
 }
 
-/** Unterstützt das Modul einen Deckel? */
+/**
+ * Hängetrenner aktiv? Nur bei senkrecht stehenden Karten mit separaten
+ * Trennern; sonst wird die normale Lasche verwendet.
+ */
+export function hangingDividers(m: InsertModule): boolean {
+  return m.type === 'cardTray' && m.orientation === 'standing' && m.dividerMode !== 'fixed' && m.tilt === 0 && m.tab && m.tabStyle === 'header';
+}
+
+/** Unterstützt das Modul einen Deckel? (Hängetrenner ragen über die Wände.) */
 export function lidAllowed(m: InsertModule): boolean {
   if (m.type !== 'cardTray') return true;
-  return !(m.orientation === 'standing' && m.tilt > 0);
+  return !(m.orientation === 'standing' && m.tilt > 0) && !hangingDividers(m);
 }
 
 export function lidInfo(m: InsertModule, p: Project): LidInfo {
@@ -278,6 +286,10 @@ export interface CardTrayLayout {
   rowDividers: number;
   dividerWidth: number;
   dividerBodyHeight: number;
+  /** Hängetrenner: Überstand der Kopfleiste je Seite über die Trennerbreite (0 = normale Lasche). */
+  headerOverhang: number;
+  /** Hängetrenner: Höhe der Kopfleiste über der Oberkante (0 = normale Lasche). */
+  headerHeight: number;
   /** Zackenmuster. */
   toothDepth: number;
   toothPitch: number;
@@ -317,12 +329,17 @@ export function cardTrayDims(m: CardTrayModule, p: Project, avail: number): Card
   const dividers = variable ? dividerTotal(m) : 0;
   const rowCards = Math.ceil(Math.max(0, m.totalCards) / rows);
   const rowDividers = Math.ceil(dividers / rows);
-  const tabH = variable && m.tab ? m.tabHeight : 0;
+  const hanging = hangingDividers(m);
+  // Hängetrenner: die Kopfleiste liegt auf den Wänden, das Fach braucht nur Kartenhöhe;
+  // die Leiste ragt über das Modul hinaus und zählt zur Gesamthöhe.
+  const headerHeight = hanging && dividers > 0 ? m.tabHeight : 0;
+  const tabH = variable && m.tab && !hanging ? m.tabHeight : 0;
 
   const requiredInnerHeight = m.orientation === 'standing' ? (face.faceH + tabH) * cos : m.cardsPerSlot * face.thickness;
-  const natural = floor + requiredInnerHeight + (m.orientation === 'standing' ? 1 : 1.5) + lid.innerReserve + lid.plate;
+  const reserve = lid.plate + headerHeight;
+  const natural = floor + requiredInnerHeight + (m.orientation === 'standing' ? 1 : 1.5) + lid.innerReserve + reserve;
   const total = totalHeight(m, natural, avail);
-  const height = Math.max(floor + 1, total - lid.plate);
+  const height = Math.max(floor + 1, total - reserve);
   const cavityHeight = Math.max(0, height - floor);
 
   let naturalW: number;
@@ -378,7 +395,7 @@ export function cardTrayDims(m: CardTrayModule, p: Project, avail: number): Card
     width,
     depth,
     height,
-    total: height + lid.plate,
+    total: height + reserve,
     floor,
     walls,
     lid,
@@ -396,7 +413,10 @@ export function cardTrayDims(m: CardTrayModule, p: Project, avail: number): Card
     rowCards,
     rowDividers,
     dividerWidth: rowInnerX - 2 * c,
-    dividerBodyHeight: face.faceH,
+    // Hängetrenner reichen bis zur Oberkante, damit die Kopfleiste auf den Wänden aufliegt.
+    dividerBodyHeight: hanging ? cavityHeight : face.faceH,
+    headerOverhang: hanging ? Math.max(0, Math.min(walls.left, walls.right, rows > 1 ? div / 2 - c / 2 : Infinity) - c) : 0,
+    headerHeight,
     toothDepth,
     toothPitch,
     slotInnerX,

@@ -5,7 +5,7 @@
  * Schrift-Einleger (für Mehrfarbdruck), separate Trenner – dazu kommen die
  * Kacheln der Grundplatte.
  */
-import { dividerTotal, floorZ, lidAllowed, lidInfo, labelSides } from './dimensions';
+import { dividerTotal, floorZ, hangingDividers, lidAllowed, lidInfo, labelSides } from './dimensions';
 import { BED_MARGIN } from './printers';
 import { cardTrayLayout, computeLayout, gridBoxLayout, moduleSize } from './layout';
 import type { BaseplateTile, CardTrayModule, HardwareItem, InsertModule, PartSpec, PlacedInstance, Project } from './types';
@@ -24,7 +24,7 @@ export function dividerLabelList(m: CardTrayModule): string[] {
 /** Anzahl der Trenner pro Laschen-Variante (Index 0..2) für ein Modul ohne Einzelbeschriftung. */
 export function dividerVariantCounts(m: CardTrayModule): number[] {
   const n = dividerTotal(m);
-  if (!m.tab || !m.tabStaggered) return [n];
+  if (!staggered(m)) return [n];
   const counts = [0, 0, 0];
   for (let i = 0; i < n; i++) counts[i % 3]++;
   return counts;
@@ -32,7 +32,12 @@ export function dividerVariantCounts(m: CardTrayModule): number[] {
 
 /** Laschenposition einer Variante (0 = links, 1 = Mitte, 2 = rechts) bzw. Mitte ohne Versatz. */
 export function tabPosition(m: CardTrayModule, variant: number): number {
-  return m.tabStaggered ? variant : 1;
+  return staggered(m) ? variant : 1;
+}
+
+/** Versetzte Laschen (nicht bei Hängetrennern, deren Kopfleiste durchgeht). */
+function staggered(m: CardTrayModule): boolean {
+  return m.tab && m.tabStaggered && !hangingDividers(m);
 }
 
 /** Beschriftungstext eines Moduls. */
@@ -128,7 +133,7 @@ export function listParts(p: Project): PartSpec[] {
             id: `${m.id}:div:L${i}`,
             kind: 'divider',
             moduleId: m.id,
-            variant: m.tabStaggered ? i % 3 : 1,
+            variant: staggered(m) ? i % 3 : 1,
             text,
             name: `${m.name} Trenner ${nr} ${text}`,
             quantity: m.quantity,

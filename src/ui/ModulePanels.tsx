@@ -484,11 +484,30 @@ function CardTrayFields({ m, set }: { m: CardTrayModule; set: Setter<CardTrayMod
           <CheckField label="Lasche zum Beschriften an den Trennern" checked={m.tab} onChange={(tab) => set({ tab })} />
           {m.tab && (
             <>
-              <div className="grid2">
-                <NumberField label="Überstand der Lasche" value={m.tabHeight} min={2} max={40} onChange={(tabHeight) => set({ tabHeight })} />
-                <NumberField label="Laschenbreite" unit="%" value={m.tabWidthPercent} min={10} max={100} onChange={(tabWidthPercent) => set({ tabWidthPercent })} />
-              </div>
-              <CheckField label="Laschen versetzt (links / Mitte / rechts)" checked={m.tabStaggered} onChange={(tabStaggered) => set({ tabStaggered })} />
+              <Segmented
+                value={m.tabStyle}
+                options={[
+                  { value: 'tab', label: 'Lasche' },
+                  { value: 'header', label: 'Hängetrenner' },
+                ]}
+                onChange={(tabStyle) => set({ tabStyle })}
+              />
+              {m.tabStyle === 'header' ? (
+                <>
+                  <NumberField label="Höhe der Kopfleiste" value={m.tabHeight} min={2} max={40} onChange={(tabHeight) => set({ tabHeight })} />
+                  <p className="muted small">
+                    Die Kopfleiste liegt links und rechts auf den Fachwänden auf, in der Mitte sitzt ein Griffschlitz. Nur bei senkrechten Fächern.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="grid2">
+                    <NumberField label="Überstand der Lasche" value={m.tabHeight} min={2} max={40} onChange={(tabHeight) => set({ tabHeight })} />
+                    <NumberField label="Laschenbreite" unit="%" value={m.tabWidthPercent} min={10} max={100} onChange={(tabWidthPercent) => set({ tabWidthPercent })} />
+                  </div>
+                  <CheckField label="Laschen versetzt (links / Mitte / rechts)" checked={m.tabStaggered} onChange={(tabStaggered) => set({ tabStaggered })} />
+                </>
+              )}
               <DividerLabels m={m} set={set} />
             </>
           )}

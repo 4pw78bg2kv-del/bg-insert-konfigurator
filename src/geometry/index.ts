@@ -13,3 +13,4 @@ export * from './templates';
 export * from './inventory';
 export * from './assembly';
 export * from './sheets';
+export * from './games';

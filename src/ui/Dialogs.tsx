@@ -3,6 +3,7 @@
  */
 import { useRef, useState, type ReactNode } from 'react';
 import {
+  GAME_PRESETS,
   TEMPLATES,
   computeLayout,
   inventoryTemplateCsv,
@@ -39,10 +40,32 @@ export function TemplateGallery() {
   const open = useStore((s) => s.galleryOpen);
   const setOpen = useStore((s) => s.setGalleryOpen);
   const addTemplate = useStore((s) => s.addTemplate);
+  const loadProject = useStore((s) => s.loadProject);
   if (!open) return null;
   const groups = [...new Set(TEMPLATES.map((t) => t.group))];
   return (
     <Modal title="Vorlagen" onClose={() => setOpen(false)} wide>
+      <h3>Spiel-Presets</h3>
+      <p className="muted small">Komplette Inserts für bestimmte Spiele (ersetzen das aktuelle Projekt).</p>
+      <div className="gallery">
+        {GAME_PRESETS.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            className="tile"
+            onClick={() => {
+              if (useStore.getState().project.modules.length === 0 || confirm(`Projekt durch das Preset „${g.label}“ ersetzen? Ungespeicherte Änderungen gehen verloren.`)) {
+                loadProject(g.create());
+                setOpen(false);
+              }
+            }}
+          >
+            <span className="tile-icon" aria-hidden>{g.icon}</span>
+            <strong>{g.label}</strong>
+            <span className="muted small">{g.description}</span>
+          </button>
+        ))}
+      </div>
       <p className="muted small">Fertig eingestellte Module. Nach dem Einfügen lässt sich alles anpassen.</p>
       {groups.map((g) => (
         <div key={g}>
